@@ -226,6 +226,36 @@ export class StudioBridgeClient {
     return this.request("/api/packages");
   }
 
+  async buildUI(parentPath: string, spec: unknown): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/api/ui/build", {
+      method: "POST",
+      body: { parent_path: parentPath, spec },
+    });
+  }
+
+  async applyLighting(
+    preset?: string,
+    customConfig?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/api/lighting/apply", {
+      method: "POST",
+      body: {
+        ...(preset ? { preset } : {}),
+        ...(customConfig ? { custom_config: customConfig } : {}),
+      },
+    });
+  }
+
+  async terrainGenerate(
+    operation: string,
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/api/terrain/generate", {
+      method: "POST",
+      body: { operation, params },
+    });
+  }
+
   private async request<T>(
     route: string,
     options?: { method?: "GET" | "POST"; body?: unknown },

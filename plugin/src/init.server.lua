@@ -8,12 +8,130 @@ local ScriptEditorService = game:GetService("ScriptEditorService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local TestService = game:GetService("TestService")
 local CollectionService = game:GetService("CollectionService")
+local Lighting = game:GetService("Lighting")
 
 local sessionToken = nil
 local connected = false
 local running = true
 
 local testResults = {}
+
+local LIGHTING_PRESETS = {
+	realistic_day = {
+		lighting = {
+			Brightness = 2,
+			ClockTime = 14,
+			GeographicLatitude = 35,
+			EnvironmentDiffuseScale = 1,
+			EnvironmentSpecularScale = 1,
+			GlobalShadows = true,
+			Technology = Enum.Technology.Future,
+		},
+		atmosphere = {
+			Density = 0.3,
+			Offset = 0.25,
+			Color = Color3.fromRGB(199, 207, 217),
+			Decay = Color3.fromRGB(92, 120, 155),
+			Glare = 0,
+			Haze = 1,
+		},
+		sky = {
+			CelestialBodiesShown = true,
+			StarCount = 3000,
+		},
+	},
+	realistic_night = {
+		lighting = {
+			Brightness = 0,
+			ClockTime = 0,
+			GlobalShadows = true,
+			Technology = Enum.Technology.Future,
+			OutdoorAmbient = Color3.fromRGB(20, 20, 40),
+		},
+		atmosphere = {
+			Density = 0.5,
+			Offset = 0,
+			Color = Color3.fromRGB(20, 24, 45),
+			Decay = Color3.fromRGB(15, 15, 30),
+			Glare = 0,
+			Haze = 2,
+		},
+		sky = {
+			StarCount = 5000,
+			CelestialBodiesShown = true,
+		},
+	},
+	sunset = {
+		lighting = {
+			Brightness = 1,
+			ClockTime = 18,
+			GlobalShadows = true,
+			Technology = Enum.Technology.Future,
+		},
+		atmosphere = {
+			Density = 0.4,
+			Offset = 0.5,
+			Color = Color3.fromRGB(255, 180, 120),
+			Decay = Color3.fromRGB(200, 100, 50),
+			Glare = 0.5,
+			Haze = 2,
+		},
+	},
+	foggy = {
+		lighting = {
+			Brightness = 1,
+			ClockTime = 10,
+			GlobalShadows = true,
+			FogColor = Color3.fromRGB(200, 200, 210),
+			FogStart = 0,
+			FogEnd = 500,
+		},
+		atmosphere = {
+			Density = 0.8,
+			Offset = 0,
+			Color = Color3.fromRGB(200, 200, 210),
+			Decay = Color3.fromRGB(180, 180, 195),
+			Glare = 0,
+			Haze = 10,
+		},
+	},
+	neon_night = {
+		lighting = {
+			Brightness = 0.5,
+			ClockTime = 22,
+			GlobalShadows = true,
+			Technology = Enum.Technology.Future,
+			OutdoorAmbient = Color3.fromRGB(30, 10, 50),
+		},
+		atmosphere = {
+			Density = 0.4,
+			Offset = 0,
+			Color = Color3.fromRGB(40, 20, 60),
+			Decay = Color3.fromRGB(30, 10, 45),
+			Glare = 0.2,
+			Haze = 3,
+		},
+		bloom = {
+			Intensity = 1.5,
+			Size = 30,
+			Threshold = 0.8,
+		},
+		color_correction = {
+			Saturation = 0.3,
+			Contrast = 0.2,
+		},
+	},
+	studio_flat = {
+		lighting = {
+			Brightness = 2,
+			ClockTime = 12,
+			GlobalShadows = false,
+			Technology = Enum.Technology.Compatibility,
+			Ambient = Color3.fromRGB(180, 180, 180),
+			OutdoorAmbient = Color3.fromRGB(180, 180, 180),
+		},
+	},
+}
 
 local toolbar = plugin:CreateToolbar("Roblox Workflow MCP")
 local toggleButton = toolbar:CreateButton(
@@ -320,6 +438,105 @@ local function toPropertyValue(value)
 		return udim2ToTable(value)
 	end
 	return value
+end
+
+local PROPERTY_ENUMS = {
+	Technology = Enum.Technology,
+	SortOrder = Enum.SortOrder,
+	FillDirection = Enum.FillDirection,
+	HorizontalAlignment = Enum.HorizontalAlignment,
+	VerticalAlignment = Enum.VerticalAlignment,
+	TextXAlignment = Enum.TextXAlignment,
+	TextYAlignment = Enum.TextYAlignment,
+	ScaleType = Enum.ScaleType,
+	AutomaticSize = Enum.AutomaticSize,
+	SizeConstraint = Enum.SizeConstraint,
+	ApplyStrokeMode = Enum.ApplyStrokeMode,
+	ResamplerMode = Enum.ResamplerMode,
+}
+
+local function tableToVector3(value)
+	return Vector3.new(value.x or 0, value.y or 0, value.z or 0)
+end
+
+local function tableToVector2(value)
+	return Vector2.new(value.x or 0, value.y or 0)
+end
+
+local function tableToColor3(value)
+	return Color3.new(value.r or 0, value.g or 0, value.b or 0)
+end
+
+local function tableToUDim2(value)
+	return UDim2.new(value.xScale or 0, value.xOffset or 0, value.yScale or 0, value.yOffset or 0)
+end
+
+local function coerceEnumValue(propertyName, value)
+	if type(value) ~= "string" then
+		return nil
+	end
+	local enumType = PROPERTY_ENUMS[propertyName]
+	if enumType and enumType[value] then
+		return enumType[value]
+	end
+	return nil
+end
+
+local function coercePropertyValue(propertyName, value)
+	if type(value) ~= "table" then
+		local enumValue = coerceEnumValue(propertyName, value)
+		if enumValue ~= nil then
+			return enumValue
+		end
+		if (propertyName == "Padding" or propertyName == "CornerRadius") and type(value) == "number" then
+			return UDim.new(0, value)
+		end
+		return value
+	end
+
+	if value.xScale ~= nil or value.xOffset ~= nil or value.yScale ~= nil or value.yOffset ~= nil then
+		return tableToUDim2(value)
+	end
+	if value.r ~= nil or value.g ~= nil or value.b ~= nil then
+		return tableToColor3(value)
+	end
+	if value.z ~= nil then
+		return tableToVector3(value)
+	end
+	if value.x ~= nil or value.y ~= nil then
+		return tableToVector2(value)
+	end
+	return value
+end
+
+local function setProperties(target, properties)
+	local count = 0
+	if not properties then
+		return count
+	end
+	for key, value in pairs(properties) do
+		target[key] = coercePropertyValue(key, value)
+		count += 1
+	end
+	return count
+end
+
+local function appendChildPath(parentPath, childName)
+	if parentPath == "" then
+		return childName
+	end
+	return parentPath .. "." .. childName
+end
+
+local function findOrCreateChildOfClass(parent, className)
+	for _, child in ipairs(parent:GetChildren()) do
+		if child.ClassName == className then
+			return child
+		end
+	end
+	local instance = Instance.new(className)
+	instance.Parent = parent
+	return instance
 end
 
 local function toJsonSafeValue(value, depth)
@@ -776,6 +993,240 @@ local function manageAttributes(params)
 	error("Unsupported attribute action: " .. tostring(params.action))
 end
 
+local function createUIElement(spec, parent, parentPath, createdPaths)
+	local instance = Instance.new(spec.class)
+	if spec.name then
+		instance.Name = spec.name
+	end
+	setProperties(instance, spec.properties)
+	instance.Parent = parent
+
+	local instancePath = appendChildPath(parentPath, instance.Name)
+	table.insert(createdPaths, instancePath)
+
+	if spec.children then
+		for _, childSpec in ipairs(spec.children) do
+			createUIElement(childSpec, instance, instancePath, createdPaths)
+		end
+	end
+
+	return instancePath
+end
+
+local function buildUI(params)
+	local parent = resolveInstancePath(params.parent_path)
+	if not parent then
+		error("Parent not found: " .. params.parent_path)
+	end
+	if type(params.spec) ~= "table" then
+		error("Missing UI spec")
+	end
+
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Build UI")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+
+	local createdPaths = {}
+	local ok, result = pcall(function()
+		return createUIElement(params.spec, parent, params.parent_path, createdPaths)
+	end)
+
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+
+	if not ok then
+		error(result)
+	end
+
+	return {
+		created_count = #createdPaths,
+		root_path = result,
+		tree = createdPaths,
+	}
+end
+
+local function applyLightingConfig(target, properties)
+	return setProperties(target, properties)
+end
+
+local function applyLighting(params)
+	local presetName = params.preset
+	local config = nil
+
+	if presetName and presetName ~= "custom" then
+		config = LIGHTING_PRESETS[presetName]
+		if not config then
+			error("Unknown lighting preset: " .. tostring(presetName))
+		end
+	else
+		config = params.custom_config
+	end
+
+	if type(config) ~= "table" then
+		error("Missing lighting configuration")
+	end
+
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Apply lighting")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+
+	local ok, result = pcall(function()
+		local propertiesSet = 0
+
+		if config.lighting then
+			propertiesSet += applyLightingConfig(Lighting, config.lighting)
+		end
+		if config.atmosphere then
+			propertiesSet += applyLightingConfig(findOrCreateChildOfClass(Lighting, "Atmosphere"), config.atmosphere)
+		end
+		if config.sky then
+			propertiesSet += applyLightingConfig(findOrCreateChildOfClass(Lighting, "Sky"), config.sky)
+		end
+		if config.bloom then
+			propertiesSet += applyLightingConfig(findOrCreateChildOfClass(Lighting, "BloomEffect"), config.bloom)
+		end
+		if config.color_correction then
+			propertiesSet += applyLightingConfig(
+				findOrCreateChildOfClass(Lighting, "ColorCorrectionEffect"),
+				config.color_correction
+			)
+		end
+		if config.sun_rays then
+			propertiesSet += applyLightingConfig(findOrCreateChildOfClass(Lighting, "SunRaysEffect"), config.sun_rays)
+		end
+
+		return {
+			preset_applied = presetName or "custom",
+			properties_set = propertiesSet,
+		}
+	end)
+
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+
+	if not ok then
+		error(result)
+	end
+
+	return result
+end
+
+local function terrainMaterial(materialName)
+	if type(materialName) == "string" and Enum.Material[materialName] then
+		return Enum.Material[materialName]
+	end
+	return Enum.Material.Grass
+end
+
+local function terrainVector3(value)
+	return Vector3.new(value.x or 0, value.y or 0, value.z or 0)
+end
+
+local function terrainGenerate(params)
+	local operation = params.operation
+	local terrainParams = params.params or {}
+	local terrain = workspace.Terrain
+
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Terrain generate")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+
+	local ok, result = pcall(function()
+		if operation == "fill_block" then
+			local cframe = CFrame.new(terrainVector3(terrainParams.position or {}))
+			local size = terrainVector3(terrainParams.size or {})
+			terrain:FillBlock(cframe, size, terrainMaterial(terrainParams.material))
+		elseif operation == "fill_ball" then
+			local center = terrainVector3(terrainParams.position or {})
+			terrain:FillBall(center, terrainParams.radius or 4, terrainMaterial(terrainParams.material))
+		elseif operation == "fill_cylinder" then
+			local cframe = CFrame.new(terrainVector3(terrainParams.position or {}))
+			terrain:FillCylinder(
+				cframe,
+				terrainParams.height or 4,
+				terrainParams.radius or 4,
+				terrainMaterial(terrainParams.material)
+			)
+		elseif operation == "fill_wedge" then
+			local cframe = CFrame.new(terrainVector3(terrainParams.position or {}))
+			local size = terrainVector3(terrainParams.size or {})
+			terrain:FillWedge(cframe, size, terrainMaterial(terrainParams.material))
+		elseif operation == "clear_region" then
+			local region = Region3.new(
+				terrainVector3(terrainParams.region_start or {}),
+				terrainVector3(terrainParams.region_end or {})
+			):ExpandToGrid(4)
+			terrain:FillRegion(region, 4, Enum.Material.Air)
+		elseif operation == "set_material_region" then
+			local region = Region3.new(
+				terrainVector3(terrainParams.region_start or {}),
+				terrainVector3(terrainParams.region_end or {})
+			):ExpandToGrid(4)
+			terrain:FillRegion(region, 4, terrainMaterial(terrainParams.material))
+		elseif operation == "generate_flat" then
+			local startPos = terrainParams.region_start or { x = -256, y = 0, z = -256 }
+			local endPos = terrainParams.region_end or { x = 256, y = 0, z = 256 }
+			local minX = math.min(startPos.x or 0, endPos.x or 0)
+			local maxX = math.max(startPos.x or 0, endPos.x or 0)
+			local minZ = math.min(startPos.z or 0, endPos.z or 0)
+			local maxZ = math.max(startPos.z or 0, endPos.z or 0)
+			local baseHeight = terrainParams.base_height or 0
+			local cframe = CFrame.new((minX + maxX) / 2, baseHeight, (minZ + maxZ) / 2)
+			local size = Vector3.new(math.max(4, maxX - minX), 4, math.max(4, maxZ - minZ))
+			terrain:FillBlock(cframe, size, terrainMaterial(terrainParams.material))
+		elseif operation == "generate_hills" then
+			local startPos = terrainParams.region_start or { x = -128, y = 0, z = -128 }
+			local endPos = terrainParams.region_end or { x = 128, y = 0, z = 128 }
+			local minX = math.min(startPos.x or 0, endPos.x or 0)
+			local maxX = math.max(startPos.x or 0, endPos.x or 0)
+			local minZ = math.min(startPos.z or 0, endPos.z or 0)
+			local maxZ = math.max(startPos.z or 0, endPos.z or 0)
+			local baseHeight = terrainParams.base_height or 10
+			local amplitude = terrainParams.amplitude or 20
+			local frequency = terrainParams.frequency or 0.02
+			local seed = terrainParams.seed or math.random(1, 10000)
+			local material = terrainMaterial(terrainParams.material)
+			local resolution = 4
+
+			for x = minX, maxX, resolution do
+				for z = minZ, maxZ, resolution do
+					local noise = math.noise(x * frequency + seed, z * frequency + seed)
+					local height = baseHeight + noise * amplitude
+					local cframe = CFrame.new(x, height / 2, z)
+					local size = Vector3.new(resolution, math.max(resolution, height), resolution)
+					terrain:FillBlock(cframe, size, material)
+				end
+			end
+		else
+			error("Unsupported terrain operation: " .. tostring(operation))
+		end
+
+		return {
+			operation = operation,
+			material = terrainParams.material,
+			success = true,
+		}
+	end)
+
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+
+	if not ok then
+		error(result)
+	end
+
+	return result
+end
+
 local function startPlaytest(params)
 	local mode = params.mode or "play"
 	local ok, err = pcall(function()
@@ -952,6 +1403,12 @@ local function processCommand(cmd)
 			return getPackageInfo(params)
 		elseif command == "get_screenshot" then
 			return getScreenshot(params)
+		elseif command == "build_ui" then
+			return buildUI(params)
+		elseif command == "apply_lighting" then
+			return applyLighting(params)
+		elseif command == "terrain_generate" then
+			return terrainGenerate(params)
 		else
 			error("Unknown command: " .. tostring(command))
 		end

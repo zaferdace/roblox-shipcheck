@@ -44,6 +44,14 @@ export class OpenCloudClient {
     return this.getJson<RobloxAssetInfo>(`/assets/v1/assets/${assetId}`);
   }
 
+  async listDevProducts(universeId: string): Promise<unknown> {
+    return this.getJson(`/cloud/v2/universes/${universeId}/developer-products`);
+  }
+
+  async listGamePasses(universeId: string): Promise<unknown> {
+    return this.getJson(`/cloud/v2/universes/${universeId}/game-passes`);
+  }
+
   async getAssetModerationStatus(assetId: string): Promise<Record<string, unknown>> {
     const candidates = [
       `/assets/v1/assets/${assetId}/moderation`,

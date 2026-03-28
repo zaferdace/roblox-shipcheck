@@ -30,7 +30,10 @@ interface PendingCommand {
     | "get_output"
     | "teleport_graph"
     | "package_info"
-    | "get_screenshot";
+    | "get_screenshot"
+    | "build_ui"
+    | "apply_lighting"
+    | "terrain_generate";
   params: unknown;
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
@@ -666,6 +669,36 @@ export function startBridgeServer(
           return;
         }
         const result = await enqueueCommand("package_info", {});
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/ui/build") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("build_ui", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/lighting/apply") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("apply_lighting", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/terrain/generate") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("terrain_generate", body);
         sendJson(request, response, 200, result);
         return;
       }
