@@ -25,6 +25,7 @@ export class OpenCloudClient {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly cacheTtlMs: number;
+  private static readonly REQUEST_TIMEOUT_MS = 15_000;
 
   constructor(apiKey: string, options?: OpenCloudOptions) {
     this.apiKey = apiKey;
@@ -80,18 +81,23 @@ export class OpenCloudClient {
     return response.data ?? response.universePlaces ?? [];
   }
 
-  private async getJson<T>(pathname: string): Promise<T> {
-    const cacheKey = pathname;
+  private async getJson<T>(pathWithQuery: string): Promise<T> {
+    const cacheKey = pathWithQuery;
     const cached = await readCachedJson<T>("open-cloud", cacheKey, this.cacheTtlMs);
     if (cached) {
       return cached;
     }
-    const url = new URL(pathname, this.baseUrl);
+    const url = new URL(pathWithQuery, this.baseUrl);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OpenCloudClient.REQUEST_TIMEOUT_MS);
     const response = await fetch(url, {
       headers: {
         "x-api-key": this.apiKey,
         Accept: "application/json",
       },
+      signal: controller.signal,
+    }).finally(() => {
+      clearTimeout(timeoutId);
     });
     if (!response.ok) {
       const body = await safeReadBody(response);

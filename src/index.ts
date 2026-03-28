@@ -30,7 +30,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main(): Promise<void> {
-  const bridge = await startBridgeServer();
+  const bridge = await startBridgeServer().catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("EADDRINUSE")) {
+      console.error("Bridge port 33796 is already in use. Is another instance running?");
+    }
+    throw error;
+  });
   const transport = new StdioServerTransport();
   try {
     await server.connect(transport);

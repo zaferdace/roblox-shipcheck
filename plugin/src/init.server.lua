@@ -2,6 +2,8 @@ local BRIDGE_HOST = "http://127.0.0.1"
 local BRIDGE_PORT = 33796
 local POLL_INTERVAL = 0.5
 local PLUGIN_VERSION = "0.1.0"
+local MAX_JSON_BREADTH = 100
+local MAX_TEST_RESULTS = 50
 
 local HttpService = game:GetService("HttpService")
 local ScriptEditorService = game:GetService("ScriptEditorService")
@@ -15,6 +17,7 @@ local connected = false
 local running = true
 
 local testResults = {}
+local testResultOrder = {}
 
 local LIGHTING_PRESETS = {
 	realistic_day = {
@@ -500,11 +503,14 @@ local function coercePropertyValue(propertyName, value)
 	if value.r ~= nil or value.g ~= nil or value.b ~= nil then
 		return tableToColor3(value)
 	end
+	if value.x ~= nil and value.y ~= nil then
+		if value.z ~= nil then
+			return tableToVector3(value)
+		end
+		return tableToVector2(value)
+	end
 	if value.z ~= nil then
 		return tableToVector3(value)
-	end
-	if value.x ~= nil or value.y ~= nil then
-		return tableToVector2(value)
 	end
 	return value
 end
@@ -519,6 +525,16 @@ local function setProperties(target, properties)
 		count += 1
 	end
 	return count
+end
+
+local function rememberTestResult(runId)
+	table.insert(testResultOrder, runId)
+	while #testResultOrder > MAX_TEST_RESULTS do
+		local oldestRunId = table.remove(testResultOrder, 1)
+		if oldestRunId ~= nil then
+			testResults[oldestRunId] = nil
+		end
+	end
 end
 
 local function appendChildPath(parentPath, childName)
@@ -563,7 +579,13 @@ local function toJsonSafeValue(value, depth)
 	end
 	if valueType == "table" then
 		local result = {}
+		local count = 0
 		for key, nestedValue in pairs(value) do
+			count += 1
+			if count > MAX_JSON_BREADTH then
+				result["_truncated"] = true
+				break
+			end
 			result[tostring(key)] = toJsonSafeValue(nestedValue, currentDepth + 1)
 		end
 		return result
@@ -605,28 +627,44 @@ local function applyPatch(params)
 					error("Parent not found: " .. op.target_path)
 				end
 				local instance = Instance.new(op.class_name)
+				local failedProps = {}
 				if op.properties then
 					for key, value in pairs(op.properties) do
-						pcall(function()
+						local propOk, propErr = pcall(function()
 							instance[key] = toPropertyValue(value)
 						end)
+						if not propOk then
+							table.insert(failedProps, { key = key, error = tostring(propErr) })
+						end
 					end
 				end
 				instance.Parent = parent
-				table.insert(changes, { type = "create", path = op.target_path .. "." .. instance.Name })
+				local change = { type = "create", path = op.target_path .. "." .. instance.Name }
+				if #failedProps > 0 then
+					change.failed_properties = failedProps
+				end
+				table.insert(changes, change)
 			elseif op.type == "update" then
 				local target = resolveInstancePath(op.target_path)
 				if not target then
 					error("Target not found: " .. op.target_path)
 				end
+				local failedProps = {}
 				if op.properties then
 					for key, value in pairs(op.properties) do
-						pcall(function()
+						local propOk, propErr = pcall(function()
 							target[key] = toPropertyValue(value)
 						end)
+						if not propOk then
+							table.insert(failedProps, { key = key, error = tostring(propErr) })
+						end
 					end
 				end
-				table.insert(changes, { type = "update", path = op.target_path })
+				local change = { type = "update", path = op.target_path }
+				if #failedProps > 0 then
+					change.failed_properties = failedProps
+				end
+				table.insert(changes, change)
 			elseif op.type == "delete" then
 				local target = resolveInstancePath(op.target_path)
 				if not target then
@@ -665,7 +703,10 @@ end
 
 local function undoPatch(_params)
 	ChangeHistoryService:Undo()
-	return { undone = true }
+	return {
+		undone = true,
+		warning = "Undo targets the most recent operation, not a specific patch",
+	}
 end
 
 local function runTests(params)
@@ -678,33 +719,32 @@ local function runTests(params)
 		configuration = config,
 		startedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
 		results = {},
+		warning = "Test execution is limited and relies on Roblox TestService behavior",
 	}
+	rememberTestResult(runId)
 
 	task.spawn(function()
 		local ok, err = pcall(function()
-			local tests = {}
-			for _, child in ipairs(TestService:GetChildren()) do
-				if child:IsA("LuaSourceContainer") then
-					table.insert(tests, child)
+			local timeout = params.timeout_seconds or params.timeoutSeconds or 60
+			local startTime = os.clock()
+			TestService:Run()
+			local elapsed = 0
+			while elapsed < timeout do
+				if TestService.IsRunning == false then
+					break
 				end
+				task.wait(0.5)
+				elapsed += 0.5
 			end
-
-			for _, testScript in ipairs(tests) do
-				local startTime = os.clock()
-				local testOk, testErr = pcall(function()
-					if testScript:IsA("Script") then
-						testScript.Disabled = false
-					end
-				end)
-				local duration = (os.clock() - startTime) * 1000
-
-				table.insert(testResults[runId].results, {
-					name = testScript.Name,
-					status = testOk and "pass" or "fail",
-					durationMs = duration,
-					errorMessage = testOk and nil or tostring(testErr),
-				})
-			end
+			local duration = math.floor((os.clock() - startTime) * 1000)
+			table.insert(testResults[runId].results, {
+				name = "TestService",
+				status = TestService.ErrorCount > 0 and "fail" or "pass",
+				durationMs = duration,
+				errorMessage = TestService.ErrorCount > 0
+						and (tostring(TestService.ErrorCount) .. " errors detected")
+					or nil,
+			})
 		end)
 
 		testResults[runId].status = ok and "completed" or "failed"
@@ -759,33 +799,42 @@ local function setScriptSource(params)
 	if not recordingId then
 		error("Failed to begin recording")
 	end
-	local ok, err = pcall(function()
+	local editorOk, editorErr = pcall(function()
 		ScriptEditorService:UpdateSourceAsync(instance, function()
 			return params.source
 		end)
 	end)
-	if not ok then
-		pcall(function()
-			instance.Source = params.source
-		end)
+	if editorOk then
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, updated = true }
 	end
-	ChangeHistoryService:FinishRecording(
-		recordingId,
-		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
-	)
-	if not ok then
-		error(err)
+	local fallbackOk, fallbackErr = pcall(function()
+		instance.Source = params.source
+	end)
+	if fallbackOk then
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, updated = true, fallback = true }
 	end
-	return { path = params.path, updated = true }
+	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Cancel)
+	error("Failed to set source: " .. tostring(editorErr) .. " / " .. tostring(fallbackErr))
 end
 
 local function executeCode(params)
+	if params.acknowledge_risk ~= true then
+		error("execute_code requires acknowledge_risk=true")
+	end
 	local code = params.code
 	local fn, compileErr = loadstring(code)
 	if not fn then
 		error("Compile error: " .. tostring(compileErr))
 	end
-	local results = { fn() }
+	local ok, resultsOrError = pcall(function()
+		return { fn() }
+	end)
+	if not ok then
+		error("Runtime error: " .. tostring(resultsOrError))
+	end
+	local results = resultsOrError
 	local jsonSafeResults = {}
 	for index, value in ipairs(results) do
 		jsonSafeResults[index] = toJsonSafeValue(value)
@@ -831,8 +880,16 @@ local function deleteInstance(params)
 	if not recordingId then
 		error("Failed to begin recording")
 	end
-	target:Destroy()
-	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+	local ok, err = pcall(function()
+		target:Destroy()
+	end)
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+	if not ok then
+		error(err)
+	end
 	return { path = params.path, deleted = true }
 end
 
@@ -845,16 +902,27 @@ local function cloneInstance(params)
 	if not recordingId then
 		error("Failed to begin recording")
 	end
-	local clone = target:Clone()
-	if params.new_parent_path then
-		local newParent = resolveInstancePath(params.new_parent_path)
-		if newParent then
+	local clone = nil
+	local ok, err = pcall(function()
+		clone = target:Clone()
+		if params.new_parent_path then
+			local newParent = resolveInstancePath(params.new_parent_path)
+			if not newParent then
+				clone:Destroy()
+				error("New parent not found: " .. params.new_parent_path)
+			end
 			clone.Parent = newParent
+		else
+			clone.Parent = target.Parent
 		end
-	else
-		clone.Parent = target.Parent
+	end)
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+	if not ok then
+		error(err)
 	end
-	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
 	return {
 		path = (params.new_parent_path or params.path:match("(.+)%..+$") or "game") .. "." .. clone.Name,
 		id = clone:GetDebugId(),
@@ -964,9 +1032,13 @@ local function manageAttributes(params)
 	end
 	if params.action == "get" then
 		if params.key then
-			return { key = params.key, value = target:GetAttribute(params.key) }
+			return { key = params.key, value = toJsonSafeValue(target:GetAttribute(params.key), 0) }
 		end
-		return { attributes = target:GetAttributes() }
+		local safeAttributes = {}
+		for key, value in pairs(target:GetAttributes()) do
+			safeAttributes[key] = toJsonSafeValue(value, 0)
+		end
+		return { attributes = safeAttributes }
 	elseif params.action == "set" then
 		if not params.key then
 			error("Missing key")
@@ -1195,6 +1267,7 @@ local function terrainGenerate(params)
 			local material = terrainMaterial(terrainParams.material)
 			local resolution = 4
 
+			local iterations = 0
 			for x = minX, maxX, resolution do
 				for z = minZ, maxZ, resolution do
 					local noise = math.noise(x * frequency + seed, z * frequency + seed)
@@ -1202,6 +1275,10 @@ local function terrainGenerate(params)
 					local cframe = CFrame.new(x, height / 2, z)
 					local size = Vector3.new(resolution, math.max(resolution, height), resolution)
 					terrain:FillBlock(cframe, size, material)
+					iterations += 1
+					if iterations % 100 == 0 then
+						task.wait()
+					end
 				end
 			end
 		else
@@ -1283,10 +1360,15 @@ local function getTeleportGraph(_params)
 			end
 			if ok and source then
 				for placeId in string.gmatch(source, "TeleportService%s*:%s*Teleport[Async]*%s*%((%d+)") do
-					table.insert(edges, { from_script = path, to_place_id = placeId })
+					table.insert(edges, { from_script = path, to_place_id = placeId, source = source })
 				end
 				for placeId in string.gmatch(source, "TeleportService%s*:%s*TeleportToPrivateServer%s*%((%d+)") do
-					table.insert(edges, { from_script = path, to_place_id = placeId, private = true })
+					table.insert(edges, {
+						from_script = path,
+						to_place_id = placeId,
+						private = true,
+						source = source,
+					})
 				end
 				if string.find(source, "TeleportService", 1, true) then
 					table.insert(nodes, { path = path, className = instance.ClassName })
@@ -1452,6 +1534,10 @@ local function startPolling()
 end
 
 local function connect()
+	if connected then
+		disconnect()
+		task.wait(0.1)
+	end
 	local ok, response = pcall(function()
 		return HttpService:RequestAsync({
 			Url = buildUrl("/studio/connect"),

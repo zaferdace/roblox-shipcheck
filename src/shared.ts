@@ -69,7 +69,7 @@ export function createResponseEnvelope<T>(
 
 export function pathToSegments(input: string): string[] {
   return input
-    .split(/[./]/u)
+    .split(".")
     .map((segment) => segment.trim())
     .filter((segment) => segment.length > 0);
 }
@@ -87,29 +87,25 @@ export function findNodeByPath(root: InstanceNode, targetPath: string): Instance
 }
 
 function findNodeBySegments(node: InstanceNode, segments: string[]): InstanceNode | null {
-  const [head, ...rest] = segments;
-  if (head === undefined) {
-    return node;
+  let startIndex = 0;
+  if (segments[0] !== undefined && (node.name === segments[0] || node.className === segments[0])) {
+    startIndex = 1;
   }
-  if (node.name !== head && node.className !== head) {
-    const childMatch = node.children.find(
-      (child) => child.name === head || child.className === head,
+  let current: InstanceNode = node;
+  for (let index = startIndex; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment === undefined) {
+      continue;
+    }
+    const child = current.children.find(
+      (candidate) => candidate.name === segment || candidate.className === segment,
     );
-    if (!childMatch) {
+    if (!child) {
       return null;
     }
-    return findNodeBySegments(childMatch, rest);
+    current = child;
   }
-  if (rest.length === 0) {
-    return node;
-  }
-  const child = node.children.find(
-    (candidate) => candidate.name === rest[0] || candidate.className === rest[0],
-  );
-  if (!child) {
-    return null;
-  }
-  return findNodeBySegments(child, rest);
+  return current;
 }
 
 export function limitInstanceDepth(
@@ -137,14 +133,34 @@ export function limitInstanceDepth(
 
 export function traverseInstances(
   node: InstanceNode,
-  visitor: (node: InstanceNode, path: string, depth: number) => void,
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
+  visitor: (node: InstanceNode, path: string, depth: number) => boolean | void,
   ancestors: string[] = [],
   depth = 0,
 ): void {
-  const currentPath = getNodePath(node, ancestors);
-  visitor(node, currentPath, depth);
-  for (const child of node.children) {
-    traverseInstances(child, visitor, [...ancestors, node.name], depth + 1);
+  const stack: Array<{ node: InstanceNode; path: string; depth: number }> = [
+    { node, path: getNodePath(node, ancestors), depth },
+  ];
+  while (stack.length > 0) {
+    const entry = stack.pop();
+    if (!entry) {
+      continue;
+    }
+    const shouldContinue = visitor(entry.node, entry.path, entry.depth);
+    if (shouldContinue === false) {
+      return;
+    }
+    for (let index = entry.node.children.length - 1; index >= 0; index -= 1) {
+      const child = entry.node.children[index];
+      if (!child) {
+        continue;
+      }
+      stack.push({
+        node: child,
+        path: `${entry.path}.${child.name}`,
+        depth: entry.depth + 1,
+      });
+    }
   }
 }
 

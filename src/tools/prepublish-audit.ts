@@ -133,6 +133,15 @@ registerTool({
 function auditSecurity(root: InstanceNode): AuditIssue[] {
   const issues: AuditIssue[] = [];
   traverseInstances(root, (node, currentPath) => {
+    if (node.className === "HttpService" && node.properties?.["HttpEnabled"] === true) {
+      issues.push({
+        severity: "medium",
+        element_path: currentPath,
+        rule: "http_enabled",
+        message: "HttpService is enabled.",
+        suggestion: "Document external calls and ensure endpoints are necessary and secured.",
+      });
+    }
     const source = readScriptSource(node);
     if (node.className === "RemoteEvent" || node.className === "RemoteFunction") {
       if (!/validated|servercheck|sanitiz/iu.test(node.name)) {
@@ -164,17 +173,6 @@ function auditSecurity(root: InstanceNode): AuditIssue[] {
         rule: "loadlibrary",
         message: "LoadLibrary usage detected.",
         suggestion: "Replace dynamic library loading with versioned local modules.",
-      });
-    }
-  });
-  traverseInstances(root, (node, currentPath) => {
-    if (node.className === "HttpService" && node.properties?.["HttpEnabled"] === true) {
-      issues.push({
-        severity: "medium",
-        element_path: currentPath,
-        rule: "http_enabled",
-        message: "HttpService is enabled.",
-        suggestion: "Document external calls and ensure endpoints are necessary and secured.",
       });
     }
   });

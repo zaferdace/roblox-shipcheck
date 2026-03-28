@@ -50,8 +50,9 @@ async function verifyPlaces(
       knownPlaces.add(placeId);
     }
   }
+  const toCheck = placeIds.filter((placeId) => !knownPlaces.has(placeId));
   await Promise.all(
-    placeIds.map(async (placeId) => {
+    toCheck.map(async (placeId) => {
       try {
         await client.getPlaceInfo(universeId, placeId);
         knownPlaces.add(placeId);
@@ -71,7 +72,12 @@ registerTool({
     const client = new StudioBridgeClient({ port: input.studio_port });
     const raw = (await client.getTeleportGraph()) as {
       nodes?: Array<{ path?: string; className?: string }>;
-      edges?: Array<{ from_script?: string; to_place_id?: string; private?: boolean }>;
+      edges?: Array<{
+        from_script?: string;
+        to_place_id?: string;
+        private?: boolean;
+        source?: string;
+      }>;
     };
     const nodeMap = new Map<string, TeleportNode>();
     const edges: TeleportEdge[] = [];
@@ -94,7 +100,10 @@ registerTool({
       edges.push({
         from: edge.from_script,
         to: edge.to_place_id,
-        ...(edge.private ? { meta: { private: true } } : {}),
+        meta: {
+          ...(edge.private ? { private: true } : {}),
+          ...(typeof edge.source === "string" ? { source: edge.source } : {}),
+        },
       });
     }
 
@@ -152,7 +161,8 @@ registerTool({
           suggestion: "Add loop guards or cooldown handling around repeated teleports.",
         });
       }
-      if (!/pcall|retry|TeleportInitFailed|ReconnectTeleportInitFailed/u.test(edge.from)) {
+      const source = typeof edge.meta?.["source"] === "string" ? edge.meta["source"] : "";
+      if (!/pcall|retry|TeleportInitFailed|ReconnectTeleportInitFailed/u.test(source)) {
         issues.push({
           severity: "low",
           rule: "missing_error_handling",

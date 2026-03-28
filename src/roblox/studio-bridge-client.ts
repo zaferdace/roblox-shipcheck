@@ -71,10 +71,10 @@ export class StudioBridgeClient {
     });
   }
 
-  async executeCode(code: string): Promise<Record<string, unknown>> {
+  async executeCode(code: string, acknowledgeRisk = false): Promise<Record<string, unknown>> {
     return this.request<Record<string, unknown>>("/api/execute", {
       method: "POST",
-      body: { code },
+      body: { code, acknowledge_risk: acknowledgeRisk },
     });
   }
 
@@ -92,7 +92,30 @@ export class StudioBridgeClient {
   }
 
   async getProperties(target: string): Promise<Record<string, RobloxPropertyValue>> {
-    if (target.includes(".") || target === "game" || target === "DataModel") {
+    const knownRoots = new Set([
+      "game",
+      "DataModel",
+      "Workspace",
+      "Players",
+      "ServerScriptService",
+      "ReplicatedStorage",
+      "ReplicatedFirst",
+      "StarterGui",
+      "StarterPack",
+      "StarterPlayer",
+      "ServerStorage",
+      "Lighting",
+      "Chat",
+      "TestService",
+      "SoundService",
+      "Teams",
+      "TextChatService",
+      "LocalizationService",
+      "MaterialService",
+    ]);
+    const normalizedTarget = target.replaceAll("/", ".");
+    const firstSegment = normalizedTarget.split(".")[0] ?? "";
+    if (knownRoots.has(firstSegment)) {
       return this.request<Record<string, RobloxPropertyValue>>(
         `/api/instance/properties?path=${encodeURIComponent(target)}`,
       );

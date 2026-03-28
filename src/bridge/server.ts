@@ -57,6 +57,7 @@ const DEFAULT_PORT = 33796;
 const POLL_WAIT_MS = 25_000;
 const POLL_CHECK_MS = 100;
 const COMMAND_TIMEOUT_MS = 30_000;
+const MAX_BODY_SIZE = 10 * 1024 * 1024;
 
 function withCorsHeaders(request: IncomingMessage, response: ServerResponse): void {
   const origin = request.headers.origin;
@@ -99,8 +100,14 @@ function sendError(
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
+  let totalSize = 0;
   for await (const chunk of request) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalSize += buffer.length;
+    if (totalSize > MAX_BODY_SIZE) {
+      throw new Error("Request body too large");
+    }
+    chunks.push(buffer);
   }
   if (chunks.length === 0) {
     return undefined;
@@ -189,7 +196,7 @@ export function startBridgeServer(
       }
       const next = queuedCommands.shift();
       if (!next) {
-        return;
+        break;
       }
       clearInterval(waiter.interval);
       clearTimeout(waiter.timeout);
@@ -705,7 +712,15 @@ export function startBridgeServer(
 
       sendError(request, response, 404, "Route not found");
     } catch (error) {
+      if (error instanceof SyntaxError) {
+        sendError(request, response, 400, "Invalid JSON in request body");
+        return;
+      }
       const message = error instanceof Error ? error.message : "Internal server error";
+      if (message === "Request body too large") {
+        sendError(request, response, 413, message);
+        return;
+      }
       sendError(request, response, 500, message);
     }
   });
@@ -731,7 +746,7 @@ export function startBridgeServer(
             cleanupCommand(command.id);
             command.reject(new Error("Bridge server stopped"));
           }
-          server.close();
+          server.close(() => undefined);
         },
       });
     });
