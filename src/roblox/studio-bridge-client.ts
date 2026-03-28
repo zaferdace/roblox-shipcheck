@@ -1,0 +1,130 @@
+import type {
+  InstanceNode,
+  Patch,
+  RobloxPropertyValue,
+  SearchQuery,
+  TestConfig,
+  TestRunResult,
+} from "../types/roblox.js";
+
+export class StudioBridgeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StudioBridgeError";
+  }
+}
+
+interface StudioBridgeOptions {
+  host?: string;
+  port?: number;
+  timeout?: number;
+}
+
+export class StudioBridgeClient {
+  readonly host: string;
+  readonly port: number;
+  readonly timeout: number;
+
+  constructor(options?: StudioBridgeOptions) {
+    this.host = options?.host ?? "localhost";
+    this.port = options?.port ?? 33796;
+    this.timeout = options?.timeout ?? 10_000;
+  }
+
+  async ping(): Promise<{ ok: boolean; version?: string }> {
+    return this.request<{ ok: boolean; version?: string }>("/api/ping");
+  }
+
+  async getDataModel(): Promise<InstanceNode> {
+    return this.request<InstanceNode>("/api/datamodel");
+  }
+
+  async searchInstances(query: SearchQuery): Promise<unknown> {
+    return this.request("/api/search", { method: "POST", body: query });
+  }
+
+  async getScreenshot(viewport: "game" | "scene"): Promise<{ pngBase64: string }> {
+    return this.request<{ pngBase64: string }>(
+      `/api/screenshot?viewport=${encodeURIComponent(viewport)}`,
+    );
+  }
+
+  async runTests(config: TestConfig): Promise<{ runId: string }> {
+    return this.request<{ runId: string }>("/api/tests/run", { method: "POST", body: config });
+  }
+
+  async getTestResults(runId: string): Promise<TestRunResult> {
+    return this.request<TestRunResult>(`/api/tests/results/${encodeURIComponent(runId)}`);
+  }
+
+  async applyPatch(patch: Patch, dryRun: boolean): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/api/patch", {
+      method: "POST",
+      body: { patch, dryRun },
+    });
+  }
+
+  async undoPatch(patchId: string): Promise<Record<string, unknown>> {
+    return this.request<Record<string, unknown>>("/api/patch/undo", {
+      method: "POST",
+      body: { patchId },
+    });
+  }
+
+  async getProperties(instanceId: string): Promise<Record<string, RobloxPropertyValue>> {
+    return this.request<Record<string, RobloxPropertyValue>>(
+      `/api/instance/${encodeURIComponent(instanceId)}/properties`,
+    );
+  }
+
+  private async request<T>(
+    route: string,
+    options?: { method?: "GET" | "POST"; body?: unknown },
+  ): Promise<T> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const url = `http://${this.host}:${this.port}${route}`;
+    try {
+      const requestInit: RequestInit = {
+        method: options?.method ?? "GET",
+        signal: controller.signal,
+      };
+      if (options?.body !== undefined) {
+        requestInit.headers = {
+          "content-type": "application/json",
+        };
+        requestInit.body = JSON.stringify(options.body);
+      }
+      const response = await fetch(url, requestInit);
+      if (!response.ok) {
+        const body = await safeReadBody(response);
+        throw new StudioBridgeError(
+          `Roblox Studio bridge request failed (${response.status}) at ${route}: ${body}`,
+        );
+      }
+      return (await response.json()) as T;
+    } catch (error) {
+      if (error instanceof StudioBridgeError) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new StudioBridgeError(
+          `Roblox Studio bridge timed out after ${this.timeout}ms at ${route}. Ensure the companion plugin is running on port ${this.port}.`,
+        );
+      }
+      throw new StudioBridgeError(
+        `Unable to reach Roblox Studio bridge at http://${this.host}:${this.port}. Ensure Roblox Studio is open and the companion plugin HTTP server is running.`,
+      );
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
+async function safeReadBody(response: Response): Promise<string> {
+  try {
+    return await response.text();
+  } catch {
+    return response.statusText;
+  }
+}
