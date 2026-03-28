@@ -26,6 +26,7 @@ import "./project-snapshot.js";
 import "./publish-place.js";
 import "./release-readiness-gate.js";
 import "./remote-contract-audit.js";
+import "./release-diff.js";
 import "./run-test-matrix.js";
 import "./runtime-profiler.js";
 import "./search-project.js";

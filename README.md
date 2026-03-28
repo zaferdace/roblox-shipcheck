@@ -3,19 +3,75 @@
 ![Version: 0.1.0](https://img.shields.io/badge/version-0.1.0-orange)
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)
-![Tools: 39](https://img.shields.io/badge/tools-39-purple)
 
-**Workflow-grade MCP server for Roblox.** Inspection, CRUD, mobile QA, pre-publish audit, test runner, safe automation, UI building, terrain generation, and more — all through MCP.
+**Release and safety automation for Roblox Studio.** Audit your project, catch issues before players do, and ship with confidence — all through MCP.
 
 Works with **any MCP-compatible client**: Claude Code, Claude Desktop, Cursor, VS Code + Copilot, Windsurf, Cline, Continue.dev, Zed.
 
-> **Not just another wrapper.** Competitors offer ~10 basic CRUD tools. `roblox-workflow-mcp` provides **39 tools** spanning primitives, workflow automation, security audits, release gates, and creative building — the most comprehensive Roblox MCP server available.
+> **Works alongside Roblox's built-in MCP.** This is not a replacement — it's a workflow layer on top. Roblox handles primitives; `roblox-workflow-mcp` handles guardrails, audits, and release engineering.
+
+---
+
+## What can it do?
+
+### Build
+Create UI, set lighting, generate terrain — let an AI agent build, not just inspect.
+
+```
+"Build a shop screen with a title, scrolling item list, and buy buttons."
+"Apply sunset lighting to my scene."
+"Generate hilly terrain from -256 to 256."
+```
+
+### Audit
+10 automated checks that catch what manual review misses.
+
+```
+"Are my RemoteEvents validated against exploits?"
+"Will my UI work on iPhone SE?"
+"Are my DataStore calls wrapped in pcall with retry logic?"
+"Do I have untranslated text?"
+```
+
+### Ship
+One command to know if you can publish.
+
+```
+"Run release_readiness_gate — can I ship this?"
+→ Checks security, mobile, datastores, marketplace, localization
+→ Returns SHIP or HOLD with blocking issues
+→ Suggests exactly what to fix
+```
+
+---
+
+## The demo (60 seconds)
+
+```
+1. "Save a baseline of my current project."
+   → rbx_release_diff saves a snapshot
+
+2. ... you make changes ...
+
+3. "What changed since my baseline? Can I ship?"
+   → rbx_release_diff compares, finds 12 modified scripts
+   → 2 touch RemoteEvents without validation → HIGH RISK
+   → Recommends: run remote_contract_audit, validate_mobile_ui
+
+4. "Run those audits and fix the issues."
+   → Agent runs audits, generates fix plan
+   → apply_patch_safe shows dry-run preview
+   → You approve → changes applied with full undo
+
+5. "Run the release gate again."
+   → SHIP ✓ — all checks pass
+```
 
 ---
 
 ## Quick Start
 
-**1. Install the companion Roblox Studio plugin**
+**1. Install the companion Studio plugin**
 
 Copy `plugin/src/init.server.lua` into your Roblox Studio plugins folder, or use [Rojo](https://rojo.space) to build from `plugin/default.project.json`.
 
@@ -33,11 +89,11 @@ Copy `plugin/src/init.server.lua` into your Roblox Studio plugins folder, or use
 
 **3. Connect the plugin**
 
-Open Roblox Studio, click the **"Toggle Connection"** button in the plugin toolbar. The bridge server starts automatically with the MCP server on `127.0.0.1:33796`.
+Open Roblox Studio, click **"Toggle Connection"** in the plugin toolbar.
 
-**4. Start using tools in your AI client.**
+**4. Start using tools.**
 
-> **Security note:** API keys for Roblox Open Cloud are passed as tool arguments per-call. Never commit them to version control. Use environment variables or your AI client's secret management.
+> **Security note:** Roblox Open Cloud API keys are passed as tool arguments per-call. Never commit them to version control.
 
 ---
 
@@ -48,130 +104,115 @@ AI Client ←stdio→ MCP Server ←http→ Bridge Server ←long-poll→ Studio
               (Node.js)         (same process)        (Lua, outbound)
 ```
 
-- **Bridge Server**: `node:http` on `127.0.0.1:33796`, command queue, session token auth, long-poll (25s)
-- **Studio Plugin**: Outbound HTTP client, toolbar connect/disconnect toggle, `ChangeHistoryService` for full undo on all mutations
-- **Open Cloud Client**: Roblox Open Cloud REST API with filesystem cache (SHA-256 keyed, 1h TTL)
+- **Bridge Server**: `node:http` on `127.0.0.1:33796`, command queue, session token auth
+- **Studio Plugin**: `ChangeHistoryService` for full undo on all mutations
+- **Open Cloud Client**: Roblox REST API with filesystem cache
 - **Zero external dependencies** beyond MCP SDK and Zod
 
 ---
 
-## Tools (39)
+## Tools
 
-### CRUD Primitives
+### Audit & Safety
 
-The building blocks — every action an agent needs to inspect and modify a Roblox project.
+The core of this project — automated checks for Roblox-specific failure modes.
+
+| Tool | What it catches |
+|------|-----------------|
+| `rbx_release_diff` | Baseline-aware diff: what changed, risk score, targeted audit recommendations, SAFE/REVIEW/HIGH_RISK verdict |
+| `rbx_release_readiness_gate` | Aggregated ship/no-ship decision across all audit categories |
+| `rbx_prepublish_audit` | Security, performance, quality, mobile, accessibility (0-100 per category) |
+| `rbx_remote_contract_audit` | RemoteEvents without validation, missing rate limiting, trust boundary violations |
+| `rbx_datastore_schema_guard` | Unwrapped pcall, hardcoded keys, missing retry logic, budget unawareness |
+| `rbx_marketplace_compliance_audit` | Missing ProcessReceipt, non-idempotent receipts, broken product references |
+| `rbx_localization_coverage_audit` | Hardcoded text, missing locale entries, dynamic string bypass |
+| `rbx_accessibility_audit` | WCAG contrast, touch targets, text scaling, navigation |
+| `rbx_validate_mobile_ui` | Safe areas, touch target overlap, text readability across devices |
+| `rbx_teleport_graph_audit` | Dead PlaceIds, circular teleports, missing error handling |
+| `rbx_package_drift_audit` | Stale packages, version mismatches, disabled auto-update |
+| `rbx_profile_runtime_hotspots` | Instance/script hotspots with baseline regression detection |
+
+### Automation & Release
+
+| Tool | What it does |
+|------|-------------|
+| `rbx_apply_patch_safe` | Batch mutations with dry-run preview and Ctrl+Z undo |
+| `rbx_generate_fix_plan` | Map a goal to a step-by-step tool execution plan |
+| `rbx_publish_place` | Publish via Open Cloud API |
+| `rbx_run_test_matrix` | TestService across server/client/multi-client configs |
+
+### Building
+
+| Tool | What it does |
+|------|-------------|
+| `rbx_execute_code` | Run Lua code in Studio |
+| `rbx_ui_builder` | Create UI hierarchies from a declarative JSON spec |
+| `rbx_lighting_preset` | 6 presets (realistic day/night, sunset, foggy, neon, studio flat) + custom |
+| `rbx_terrain_generate` | Fill, clear, or generate landscapes with Perlin noise |
+
+### Studio Primitives
+
+Full CRUD for AI agents — every action needed to inspect and modify a project.
 
 | Tool | Description |
 |------|-------------|
-| `rbx_execute_code` | Execute arbitrary Lua code in Roblox Studio |
-| `rbx_get_script_source` | Read script source by DataModel path |
-| `rbx_set_script_source` | Write/update script source with undo support |
-| `rbx_create_instance` | Create a new instance under a parent path |
-| `rbx_delete_instance` | Delete an instance by DataModel path |
-| `rbx_clone_instance` | Clone an instance, optionally to a new parent |
-| `rbx_move_instance` | Move/reparent an instance |
-| `rbx_get_instance_properties` | Read all properties of an instance |
-| `rbx_set_instance_property` | Set a single instance property |
-| `rbx_get_children` | List children of an instance with depth control |
-| `rbx_get_selection` | Get current Studio selection |
-| `rbx_get_output` | Fetch Studio output/console log entries |
-| `rbx_manage_tags` | Add, remove, or list CollectionService tags |
-| `rbx_manage_attributes` | Get, set, or delete instance attributes |
-| `rbx_start_playtest` | Start a Studio playtest session |
-| `rbx_stop_playtest` | Stop the current playtest session |
-
-### Inspection & Search
-
-Understand your project structure without manual browsing.
-
-| Tool | Description |
-|------|-------------|
-| `rbx_project_snapshot` | Stable DataModel tree snapshot with depth limiting |
-| `rbx_search_project` | Search instances by name, class, property, or script content |
-| `rbx_get_instance_properties` | Detailed property inspection by path |
-
-### Quality & Security Audits
-
-Automated checks that catch issues before they reach players.
-
-| Tool | Description |
-|------|-------------|
-| `rbx_prepublish_audit` | Categorized quality audit (security, performance, quality, mobile, accessibility) with 0-100 score |
-| `rbx_remote_contract_audit` | Audit RemoteEvents/Functions for validation, rate limiting, and trust boundary issues |
-| `rbx_datastore_schema_guard` | Validate DataStore usage: pcall wrapping, key hygiene, retry logic, budget awareness |
-| `rbx_marketplace_compliance_audit` | Audit monetization: ProcessReceipt handling, idempotency, product references, failover UX |
-| `rbx_localization_coverage_audit` | Find untranslated text, hardcoded strings, and locale coverage gaps |
-| `rbx_accessibility_audit` | WCAG-style audit: contrast ratios, touch targets, text scaling, navigation |
-| `rbx_validate_mobile_ui` | Mobile-specific validation: safe areas, touch targets, overlap detection, text readability |
-| `rbx_teleport_graph_audit` | Dead PlaceIds, circular teleports, missing error handling, graph visualization |
-| `rbx_package_drift_audit` | Stale packages, version mismatches, disabled auto-update detection |
-| `rbx_profile_runtime_hotspots` | Performance hotspot analysis with baseline comparison and regression detection |
-
-### Testing & Release
-
-Ship with confidence.
-
-| Tool | Description |
-|------|-------------|
-| `rbx_run_test_matrix` | Run TestService tests across server/client/multi-client configurations |
-| `rbx_release_readiness_gate` | Aggregated ship/no-ship verdict from all audit checks with configurable thresholds |
-| `rbx_publish_place` | Publish a place version via Open Cloud API |
-
-### Safe Automation
-
-Make changes with dry-run previews and full undo support.
-
-| Tool | Description |
-|------|-------------|
-| `rbx_apply_patch_safe` | Batch instance mutations with dry-run preview and ChangeHistoryService rollback |
-| `rbx_generate_fix_plan` | Map a high-level goal to a step-by-step tool execution plan |
+| `rbx_project_snapshot` | DataModel tree snapshot with depth control |
+| `rbx_search_project` | Search by name, class, property, or script content |
+| `rbx_get_script_source` / `rbx_set_script_source` | Read/write script source |
+| `rbx_create_instance` / `rbx_delete_instance` | Create or delete instances |
+| `rbx_clone_instance` / `rbx_move_instance` | Clone or reparent |
+| `rbx_get_instance_properties` / `rbx_set_instance_property` | Read/write properties |
+| `rbx_get_children` / `rbx_get_selection` / `rbx_get_output` | Inspect hierarchy, selection, console |
+| `rbx_manage_tags` / `rbx_manage_attributes` | CollectionService tags, instance attributes |
+| `rbx_start_playtest` / `rbx_stop_playtest` | Playtest control |
 
 ### Open Cloud
 
-Interact with Roblox services without opening Studio.
-
 | Tool | Description |
 |------|-------------|
-| `rbx_opencloud_experience_info` | Fetch universe/place metadata (name, description, visibility, timestamps) |
-| `rbx_asset_publish_status` | Check asset moderation and publish status for up to 10 assets |
-| `rbx_list_products` | List all DevProducts and GamePasses for a universe |
-
-### Creative Building
-
-Tools that let an AI agent create, not just inspect.
-
-| Tool | Description |
-|------|-------------|
-| `rbx_ui_builder` | Build complete UI hierarchies from a declarative JSON spec |
-| `rbx_lighting_preset` | Apply lighting/atmosphere presets (realistic day, night, sunset, foggy, neon, studio flat) or custom config |
-| `rbx_terrain_generate` | Generate terrain: fill block/ball/cylinder/wedge, clear regions, generate flat or hilly landscapes |
+| `rbx_opencloud_experience_info` | Universe/place metadata |
+| `rbx_asset_publish_status` | Asset moderation status |
+| `rbx_list_products` | DevProducts and GamePasses |
 
 ---
 
-## Comparison
+## Why not just use Roblox's built-in MCP?
 
-| Feature | roblox-workflow-mcp | boshyxd/robloxstudio-mcp | Roblox Built-in |
-|---------|:--:|:--:|:--:|
-| Total tools | **39** | ~10 | ~5 |
-| CRUD primitives | 16 | ~8 | ~5 |
-| Security audits | 3 | - | - |
-| Mobile/accessibility QA | 3 | - | - |
-| Pre-publish gate | 1 | - | - |
-| DataStore validation | 1 | - | - |
-| Marketplace audit | 1 | - | - |
-| Localization audit | 1 | - | - |
-| Teleport graph analysis | 1 | - | - |
-| Package drift detection | 1 | - | - |
-| UI builder | 1 | - | - |
-| Terrain generation | 1 | - | - |
-| Lighting presets | 1 | - | - |
-| Open Cloud integration | 4 | - | - |
-| Release readiness gate | 1 | - | - |
-| Performance profiling | 1 | - | - |
-| Fix plan generator | 1 | - | - |
-| Dry-run + undo | Yes | - | - |
-| ChangeHistoryService | Yes | - | - |
-| Session auth | Yes | - | - |
+Roblox's built-in MCP gives you **primitives** — create, read, update, delete, playtest.
+
+`roblox-workflow-mcp` gives you **workflows**:
+
+| Need | Built-in MCP | This project |
+|------|:--:|:--:|
+| Create a Part | Yes | Yes |
+| Know if your RemoteEvents are exploitable | - | `remote_contract_audit` |
+| Know if your DataStore calls will lose data | - | `datastore_schema_guard` |
+| Know if your UI works on iPhone SE | - | `validate_mobile_ui` |
+| Know if you can safely publish | - | `release_readiness_gate` |
+| See what changed since last publish | - | `release_diff` |
+| Apply fixes with undo | - | `apply_patch_safe` |
+| Get a step-by-step remediation plan | - | `generate_fix_plan` |
+
+Use both. Let Roblox handle transport; let this project handle guardrails.
+
+---
+
+## Prompt Cookbook
+
+**"Can I ship this?"**
+> "Run `rbx_release_readiness_gate` with all checks. Show me blocking issues and how to fix them."
+
+**"What changed since last publish?"**
+> "Run `rbx_release_diff` against my baseline at `./baseline.json`. What's the risk?"
+
+**"Audit my security"**
+> "Run `rbx_remote_contract_audit` and `rbx_datastore_schema_guard`. Summarize high-severity issues."
+
+**"Build a shop UI"**
+> "Use `rbx_ui_builder` to create a shop screen under StarterGui with title, scroll list, and buy buttons."
+
+**"Fix all mobile issues"**
+> "Run `rbx_validate_mobile_ui`, then use `rbx_generate_fix_plan` to create a fix plan, then `rbx_apply_patch_safe` in dry-run mode."
 
 ---
 
@@ -182,14 +223,8 @@ Every tool returns a consistent envelope:
 ```json
 {
   "schema_version": "0.1.0",
-  "source": {
-    "studio_port": 33796
-  },
-  "freshness": {
-    "fresh": true,
-    "timestamp": "2026-03-28T12:00:00.000Z",
-    "ttl_ms": 3600000
-  },
+  "source": { "studio_port": 33796 },
+  "freshness": { "fresh": true, "timestamp": "2026-03-28T12:00:00.000Z", "ttl_ms": 3600000 },
   "warnings": [],
   "data": { }
 }
@@ -197,50 +232,22 @@ Every tool returns a consistent envelope:
 
 ---
 
-## Prompt Cookbook
-
-Ready-to-use prompts for your AI client:
-
-**Find and fix mobile UI issues:**
-> "Run `rbx_validate_mobile_ui` on my game, then use `rbx_set_instance_property` to fix any touch targets that are too small."
-
-**Pre-publish check:**
-> "Run `rbx_release_readiness_gate` with all checks. If it says HOLD, show me the blocking issues and suggest fixes."
-
-**Build a shop UI:**
-> "Use `rbx_ui_builder` to create a shop screen under StarterGui with a title, scrolling item list, and buy buttons."
-
-**Set mood lighting:**
-> "Apply the `neon_night` lighting preset to my game using `rbx_lighting_preset`."
-
-**Security audit:**
-> "Run `rbx_remote_contract_audit` and `rbx_datastore_schema_guard` on my project. Summarize the high-severity issues."
-
-**Generate terrain:**
-> "Use `rbx_terrain_generate` to create a hilly grass landscape from -256 to 256 on X/Z with 30 amplitude."
-
----
-
 ## Plugin Setup
 
 ### Option A: Manual install
-1. Copy `plugin/src/init.server.lua` to your Roblox Studio plugins folder
-2. Restart Studio
-3. Click **"Toggle Connection"** in the toolbar
+Copy `plugin/src/init.server.lua` to your Studio plugins folder → restart → click **"Toggle Connection"**.
 
-### Option B: Rojo build
+### Option B: Rojo
 ```bash
-cd plugin
-rojo build -o RobloxWorkflowMCP.rbxm
+cd plugin && rojo build -o RobloxWorkflowMCP.rbxm
 ```
-Then install the `.rbxm` as a Studio plugin.
 
 ### Plugin features
 - One-click connect/disconnect
 - Session token authentication
-- `ChangeHistoryService` integration — every mutation is undoable via Ctrl+Z
-- `ScriptEditorService:GetEditorSource()` for accurate script reads
-- `LogService:GetLogHistory()` for console output capture
+- Full undo via `ChangeHistoryService` — every mutation is Ctrl+Z reversible
+- `ScriptEditorService` for accurate script reads
+- `LogService` for console output capture
 
 ---
 
@@ -253,33 +260,26 @@ npm install
 npm run build
 ```
 
-### Scripts
-
 | Script | Description |
 |--------|-------------|
-| `npm run build` | Compile TypeScript to `dist/` |
+| `npm run build` | Compile TypeScript |
 | `npm run dev` | Watch mode |
-| `npm run check` | Full quality gate: tsc + eslint + prettier + publint |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier auto-fix |
+| `npm run check` | Full gate: tsc + eslint + prettier + publint |
 
-### Adding a new tool
+### Adding a tool
 
-1. Create `src/tools/your-tool.ts`
-2. Define a Zod schema and handler function
-3. Call `registerTool()` at the bottom of the file
-4. Add `import "./your-tool.js"` to `src/tools/register-all.ts`
-5. If the tool needs a new bridge command, update `src/bridge/server.ts`, `src/roblox/studio-bridge-client.ts`, and `plugin/src/init.server.lua`
+1. Create `src/tools/your-tool.ts` with Zod schema + handler + `registerTool()`
+2. Add import to `src/tools/register-all.ts`
+3. If bridge needed: update `src/bridge/server.ts`, `src/roblox/studio-bridge-client.ts`, `plugin/src/init.server.lua`
 
 ---
 
 ## Roadmap
 
-- [ ] npm publish (after real Studio testing)
-- [ ] Unit tests for shared utilities and tool logic
-- [ ] Demo video (60s end-to-end workflow)
+- [ ] npm publish
+- [ ] Unit tests
+- [ ] Demo video (60s end-to-end: baseline → changes → audit → fix → ship)
 - [ ] SonarCloud integration
-- [ ] Studio plugin icon
 - [ ] awesome-mcp-servers PR
 
 ---

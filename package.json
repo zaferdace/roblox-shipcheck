@@ -1,7 +1,7 @@
 {
   "name": "roblox-workflow-mcp",
   "version": "0.1.0",
-  "description": "Workflow-grade MCP server for Roblox — inspection, mobile QA, pre-publish audit, test runner, and safe automation.",
+  "description": "Release and safety automation for Roblox Studio — audits, release gates, baseline diffs, and safe automation through MCP.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

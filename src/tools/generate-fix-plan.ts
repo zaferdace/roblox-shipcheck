@@ -67,6 +67,19 @@ registerTool({
         "Publishing goals benefit from a full audit.",
       );
     }
+    if (/diff|changed|baseline|compare|release/u.test(goal)) {
+      addStep(
+        "rbx_release_diff",
+        "Compare the current place against a saved baseline to summarize release risk and changed areas.",
+        {
+          studio_port: input.studio_port,
+          run_targeted_audits: true,
+          ...(input.api_key ? { api_key: input.api_key } : {}),
+          ...(input.universe_id ? { universe_id: input.universe_id } : {}),
+        },
+        "The goal mentions release comparison, change detection, or baseline-driven review.",
+      );
+    }
     if (/test|broken|failing|regression/u.test(goal)) {
       addStep(
         "rbx_run_test_matrix",
