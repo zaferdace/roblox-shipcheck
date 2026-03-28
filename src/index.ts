@@ -2,6 +2,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { startBridgeServer } from "./bridge/index.js";
 import { SERVER_VERSION } from "./shared.js";
 import "./tools/register-all.js";
 import { executeTool, getToolDefinitions } from "./tools/registry.js";
@@ -29,8 +30,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 });
 
 async function main(): Promise<void> {
+  const bridge = await startBridgeServer();
   const transport = new StdioServerTransport();
-  await server.connect(transport);
+  try {
+    await server.connect(transport);
+  } finally {
+    bridge.stop();
+  }
 }
 
 main().catch((error) => {
