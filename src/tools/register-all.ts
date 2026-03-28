@@ -1,9 +1,15 @@
 import "./apply-patch-safe.js";
 import "./asset-publish-status.js";
+import "./datastore-schema-guard.js";
 import "./generate-fix-plan.js";
+import "./localization-coverage.js";
+import "./marketplace-compliance.js";
 import "./opencloud-experience-info.js";
 import "./prepublish-audit.js";
 import "./project-snapshot.js";
+import "./release-readiness-gate.js";
+import "./remote-contract-audit.js";
 import "./run-test-matrix.js";
+import "./runtime-profiler.js";
 import "./search-project.js";
 import "./validate-mobile-ui.js";

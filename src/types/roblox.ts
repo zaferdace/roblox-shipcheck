@@ -1,4 +1,12 @@
 export type Primitive = string | number | boolean | null;
+export type AuditSeverity = "low" | "medium" | "high";
+export type ReleaseReadinessCheck =
+  | "audit"
+  | "mobile"
+  | "remotes"
+  | "datastores"
+  | "marketplace"
+  | "localization";
 
 export type RobloxPropertyValue =
   | Primitive
