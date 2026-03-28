@@ -13,7 +13,23 @@ interface PendingCommand {
     | "undo_patch"
     | "run_tests"
     | "get_test_results"
+    | "execute_code"
+    | "set_script_source"
     | "get_script_source"
+    | "create_instance"
+    | "delete_instance"
+    | "clone_instance"
+    | "move_instance"
+    | "set_instance_property"
+    | "get_children"
+    | "get_selection"
+    | "manage_tags"
+    | "manage_attributes"
+    | "start_playtest"
+    | "stop_playtest"
+    | "get_output"
+    | "teleport_graph"
+    | "package_info"
     | "get_screenshot";
   params: unknown;
   resolve: (result: unknown) => void;
@@ -444,6 +460,40 @@ export function startBridgeServer(
         return;
       }
 
+      if (request.method === "POST" && pathname === "/api/execute") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("execute_code", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/script/source") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const path = url.searchParams.get("path") ?? undefined;
+        if (!path) {
+          sendError(request, response, 400, "Missing path");
+          return;
+        }
+        const result = await enqueueCommand("get_script_source", { path });
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/script/source") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("set_script_source", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
       if (
         request.method === "GET" &&
         pathname.startsWith("/api/instance/") &&
@@ -460,6 +510,162 @@ export function startBridgeServer(
           return;
         }
         const result = await enqueueCommand("get_properties", { id: instanceId });
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/instance/properties") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const path = url.searchParams.get("path") ?? undefined;
+        if (!path) {
+          sendError(request, response, 400, "Missing path");
+          return;
+        }
+        const result = await enqueueCommand("get_properties", { path });
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/instance/create") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("create_instance", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/instance/delete") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("delete_instance", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/instance/clone") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("clone_instance", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/instance/move") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("move_instance", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/instance/set-property") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("set_instance_property", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/instance/children") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const path = url.searchParams.get("path") ?? undefined;
+        const depth = coerceInteger(url.searchParams.get("depth") ?? undefined);
+        const result = await enqueueCommand("get_children", {
+          ...(path ? { path } : {}),
+          ...(depth !== undefined ? { depth } : {}),
+        });
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/selection") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const result = await enqueueCommand("get_selection", {});
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/tags") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("manage_tags", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/attributes") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("manage_attributes", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/playtest/start") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const body = await readJsonBody(request);
+        const result = await enqueueCommand("start_playtest", body);
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "POST" && pathname === "/api/playtest/stop") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const result = await enqueueCommand("stop_playtest", {});
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/output") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const limit = coerceInteger(url.searchParams.get("limit") ?? undefined);
+        const result = await enqueueCommand("get_output", {
+          ...(limit !== undefined ? { limit } : {}),
+        });
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/teleport-graph") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const result = await enqueueCommand("teleport_graph", {});
+        sendJson(request, response, 200, result);
+        return;
+      }
+
+      if (request.method === "GET" && pathname === "/api/packages") {
+        if (!requirePluginSession(request, response)) {
+          return;
+        }
+        const result = await enqueueCommand("package_info", {});
         sendJson(request, response, 200, result);
         return;
       }

@@ -48,6 +48,12 @@ registerTool({
         { studio_port: input.studio_port },
         "The goal mentions mobile or UI concerns.",
       );
+      addStep(
+        "rbx_accessibility_audit",
+        "Audit accessibility issues across contrast, touch targets, and text scaling.",
+        { studio_port: input.studio_port },
+        "Mobile and UI work often overlaps with accessibility risks.",
+      );
     }
     if (/publish|release|ship|launch/u.test(goal)) {
       addStep(
@@ -84,6 +90,28 @@ registerTool({
         "The goal implies discovery before action.",
       );
     }
+    if (/script|source|lua|code/u.test(goal)) {
+      addStep(
+        "rbx_get_script_source",
+        "Read the relevant script source before changing behavior.",
+        {
+          studio_port: input.studio_port,
+          path: "game.ServerScriptService.ExampleScript",
+        },
+        "Script-related goals usually start with source inspection.",
+      );
+    }
+    if (/property|attribute|tag/u.test(goal)) {
+      addStep(
+        "rbx_get_instance_properties",
+        "Inspect instance state, properties, tags, and attributes for the target path.",
+        {
+          studio_port: input.studio_port,
+          path: "game.Workspace.Target",
+        },
+        "Property and metadata changes should start with current state.",
+      );
+    }
     if (/fix|change|update|patch|rename/u.test(goal)) {
       addStep(
         "rbx_apply_patch_safe",
@@ -94,6 +122,111 @@ registerTool({
           operations: [],
         },
         "The goal requires project mutations; the safe patch tool provides preview and rollback.",
+      );
+    }
+    if (/create|spawn|add instance|new part|insert/u.test(goal)) {
+      addStep(
+        "rbx_create_instance",
+        "Create the required Roblox instance under the intended parent path.",
+        {
+          studio_port: input.studio_port,
+          parent_path: "game.Workspace",
+          class_name: "Part",
+        },
+        "Creation requests map directly to the instance creation tool.",
+      );
+    }
+    if (/delete|remove|destroy/u.test(goal)) {
+      addStep(
+        "rbx_delete_instance",
+        "Delete the targeted Roblox instance by path.",
+        {
+          studio_port: input.studio_port,
+          path: "game.Workspace.Target",
+        },
+        "Removal requests map directly to deletion.",
+      );
+    }
+    if (/move|reparent|parent/u.test(goal)) {
+      addStep(
+        "rbx_move_instance",
+        "Reparent the target instance to the desired location.",
+        {
+          studio_port: input.studio_port,
+          path: "game.Workspace.Target",
+          new_parent_path: "game.ReplicatedStorage",
+        },
+        "Parenting changes are best handled with the move tool.",
+      );
+    }
+    if (/clone|duplicate|copy/u.test(goal)) {
+      addStep(
+        "rbx_clone_instance",
+        "Clone the target instance for safe iteration or duplication.",
+        {
+          studio_port: input.studio_port,
+          path: "game.Workspace.Template",
+        },
+        "Duplication requests map directly to cloning.",
+      );
+    }
+    if (/select|selection/u.test(goal)) {
+      addStep(
+        "rbx_get_selection",
+        "Read the current Studio selection to target edits precisely.",
+        { studio_port: input.studio_port },
+        "Selection-aware workflows should confirm Studio context first.",
+      );
+    }
+    if (/playtest|play test|run game|stop test/u.test(goal)) {
+      addStep(
+        "rbx_start_playtest",
+        "Start a Studio playtest in the requested mode.",
+        { studio_port: input.studio_port, mode: "play" as const },
+        "Playtest workflows should explicitly start or stop simulation.",
+      );
+      addStep(
+        "rbx_get_output",
+        "Inspect recent Studio output for runtime errors during the playtest.",
+        { studio_port: input.studio_port, limit: 100 },
+        "Playtest debugging depends on runtime output.",
+      );
+    }
+    if (/teleport|place transition|portal/u.test(goal)) {
+      addStep(
+        "rbx_teleport_graph_audit",
+        "Audit teleport targets, loops, and broken PlaceId references.",
+        {
+          studio_port: input.studio_port,
+          ...(input.api_key ? { api_key: input.api_key } : {}),
+          ...(input.universe_id ? { universe_id: input.universe_id } : {}),
+        },
+        "Teleport-related goals benefit from graph validation.",
+      );
+    }
+    if (/package|drift|fork|version mismatch/u.test(goal)) {
+      addStep(
+        "rbx_package_drift_audit",
+        "Inspect PackageLink instances for drift and stale versions.",
+        { studio_port: input.studio_port },
+        "Package maintenance goals require version drift inspection.",
+      );
+    }
+    if (
+      /publish place|publish build|ship place/u.test(goal) &&
+      input.api_key &&
+      input.universe_id
+    ) {
+      addStep(
+        "rbx_publish_place",
+        "Publish the target place version through Open Cloud.",
+        {
+          api_key: input.api_key,
+          universe_id: input.universe_id,
+          place_id: "PLACE_ID",
+          version_type: "Published" as const,
+        },
+        "Explicit place publishing requests map to the publish tool.",
       );
     }
     if (/performance|lag|slow|fps/u.test(goal)) {

@@ -322,6 +322,38 @@ local function toPropertyValue(value)
 	return value
 end
 
+local function toJsonSafeValue(value, depth)
+	local currentDepth = depth or 0
+	if currentDepth > 4 then
+		return tostring(value)
+	end
+
+	local valueType = typeof(value)
+	if value == nil or valueType == "string" or valueType == "number" or valueType == "boolean" then
+		return value
+	end
+	if valueType == "Vector3" then
+		return vector3ToTable(value)
+	end
+	if valueType == "Color3" then
+		return color3ToTable(value)
+	end
+	if valueType == "UDim2" then
+		return udim2ToTable(value)
+	end
+	if valueType == "Instance" then
+		return value:GetFullName()
+	end
+	if valueType == "table" then
+		local result = {}
+		for key, nestedValue in pairs(value) do
+			result[tostring(key)] = toJsonSafeValue(nestedValue, currentDepth + 1)
+		end
+		return result
+	end
+	return tostring(value)
+end
+
 local function applyPatch(params)
 	local patch = params.patch
 	local dryRun = params.dryRun
@@ -498,6 +530,351 @@ local function getScriptSource(params)
 	return { path = instancePath, source = source }
 end
 
+local function setScriptSource(params)
+	local instance = resolveInstancePath(params.path)
+	if not instance then
+		error("Not found: " .. params.path)
+	end
+	if not instance:IsA("LuaSourceContainer") then
+		error("Not a script")
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Set script source")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	local ok, err = pcall(function()
+		ScriptEditorService:UpdateSourceAsync(instance, function()
+			return params.source
+		end)
+	end)
+	if not ok then
+		pcall(function()
+			instance.Source = params.source
+		end)
+	end
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+	if not ok then
+		error(err)
+	end
+	return { path = params.path, updated = true }
+end
+
+local function executeCode(params)
+	local code = params.code
+	local fn, compileErr = loadstring(code)
+	if not fn then
+		error("Compile error: " .. tostring(compileErr))
+	end
+	local results = { fn() }
+	local jsonSafeResults = {}
+	for index, value in ipairs(results) do
+		jsonSafeResults[index] = toJsonSafeValue(value)
+	end
+	return { success = true, results = jsonSafeResults }
+end
+
+local function createInstance(params)
+	local parent = resolveInstancePath(params.parent_path)
+	if not parent then
+		error("Parent not found: " .. params.parent_path)
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Create instance")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	local instance = Instance.new(params.class_name)
+	if params.name then
+		instance.Name = params.name
+	end
+	if params.properties then
+		for key, value in pairs(params.properties) do
+			pcall(function()
+				instance[key] = toPropertyValue(value)
+			end)
+		end
+	end
+	instance.Parent = parent
+	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+	return {
+		path = params.parent_path .. "." .. instance.Name,
+		id = instance:GetDebugId(),
+		className = params.class_name,
+	}
+end
+
+local function deleteInstance(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Delete instance")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	target:Destroy()
+	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+	return { path = params.path, deleted = true }
+end
+
+local function cloneInstance(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Clone instance")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	local clone = target:Clone()
+	if params.new_parent_path then
+		local newParent = resolveInstancePath(params.new_parent_path)
+		if newParent then
+			clone.Parent = newParent
+		end
+	else
+		clone.Parent = target.Parent
+	end
+	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+	return {
+		path = (params.new_parent_path or params.path:match("(.+)%..+$") or "game") .. "." .. clone.Name,
+		id = clone:GetDebugId(),
+	}
+end
+
+local function moveInstance(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	local newParent = resolveInstancePath(params.new_parent_path)
+	if not newParent then
+		error("Parent not found: " .. params.new_parent_path)
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Move instance")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	target.Parent = newParent
+	ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+	return { path = params.new_parent_path .. "." .. target.Name, moved = true }
+end
+
+local function setInstanceProperty(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Set property")
+	if not recordingId then
+		error("Failed to begin recording")
+	end
+	local ok, err = pcall(function()
+		target[params.property] = toPropertyValue(params.value)
+	end)
+	ChangeHistoryService:FinishRecording(
+		recordingId,
+		ok and Enum.FinishRecordingOperation.Commit or Enum.FinishRecordingOperation.Cancel
+	)
+	if not ok then
+		error(err)
+	end
+	return { path = params.path, property = params.property, updated = true }
+end
+
+local function getChildren(params)
+	local target = resolveInstancePath(params.path or "game")
+	if not target then
+		error("Not found")
+	end
+	local depth = params.depth or 1
+	return serializeInstance(target, 0, depth, false)
+end
+
+local function getSelection(_params)
+	local selected = game:GetService("Selection"):Get()
+	local result = {}
+	for _, instance in ipairs(selected) do
+		table.insert(result, {
+			name = instance.Name,
+			className = instance.ClassName,
+			id = instance:GetDebugId(),
+			path = instance:GetFullName(),
+		})
+	end
+	return { selection = result }
+end
+
+local function manageTags(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	if params.action == "list" then
+		return { tags = CollectionService:GetTags(target) }
+	elseif params.action == "add" then
+		if not params.tag then
+			error("Missing tag")
+		end
+		local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Add tag")
+		if not recordingId then
+			error("Failed to begin recording")
+		end
+		CollectionService:AddTag(target, params.tag)
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, tag = params.tag, added = true }
+	elseif params.action == "remove" then
+		if not params.tag then
+			error("Missing tag")
+		end
+		local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Remove tag")
+		if not recordingId then
+			error("Failed to begin recording")
+		end
+		CollectionService:RemoveTag(target, params.tag)
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, tag = params.tag, removed = true }
+	end
+	error("Unsupported tag action: " .. tostring(params.action))
+end
+
+local function manageAttributes(params)
+	local target = resolveInstancePath(params.path)
+	if not target then
+		error("Not found: " .. params.path)
+	end
+	if params.action == "get" then
+		if params.key then
+			return { key = params.key, value = target:GetAttribute(params.key) }
+		end
+		return { attributes = target:GetAttributes() }
+	elseif params.action == "set" then
+		if not params.key then
+			error("Missing key")
+		end
+		local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Set attribute")
+		if not recordingId then
+			error("Failed to begin recording")
+		end
+		target:SetAttribute(params.key, params.value)
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, key = params.key, set = true }
+	elseif params.action == "delete" then
+		if not params.key then
+			error("Missing key")
+		end
+		local recordingId = ChangeHistoryService:TryBeginRecording("MCP: Delete attribute")
+		if not recordingId then
+			error("Failed to begin recording")
+		end
+		target:SetAttribute(params.key, nil)
+		ChangeHistoryService:FinishRecording(recordingId, Enum.FinishRecordingOperation.Commit)
+		return { path = params.path, key = params.key, deleted = true }
+	end
+	error("Unsupported attribute action: " .. tostring(params.action))
+end
+
+local function startPlaytest(params)
+	local mode = params.mode or "play"
+	local ok, err = pcall(function()
+		if mode == "run" then
+			game:GetService("RunService"):Run()
+		else
+			plugin:StartDecal()
+		end
+	end)
+	return {
+		started = ok,
+		mode = mode,
+		note = "Playtest control may require manual interaction",
+		error = ok and nil or tostring(err),
+	}
+end
+
+local function stopPlaytest(_params)
+	local ok, err = pcall(function()
+		game:GetService("RunService"):Stop()
+	end)
+	return { stopped = ok, error = ok and nil or tostring(err) }
+end
+
+local function getOutput(params)
+	local history = game:GetService("LogService"):GetLogHistory()
+	local limit = params.limit or 100
+	local entries = {}
+	local startIndex = math.max(1, #history - limit + 1)
+	for index = startIndex, #history do
+		local entry = history[index]
+		table.insert(entries, {
+			message = entry.message,
+			messageType = tostring(entry.messageType),
+			timestamp = entry.timestamp,
+		})
+	end
+	return { entries = entries, total = #history }
+end
+
+local function getTeleportGraph(_params)
+	local nodes = {}
+	local edges = {}
+
+	local function scanForTeleports(instance, path)
+		if instance:IsA("LuaSourceContainer") then
+			local ok, source = pcall(function()
+				return ScriptEditorService:GetEditorSource(instance)
+			end)
+			if not ok then
+				ok, source = pcall(function()
+					return instance.Source
+				end)
+			end
+			if ok and source then
+				for placeId in string.gmatch(source, "TeleportService%s*:%s*Teleport[Async]*%s*%((%d+)") do
+					table.insert(edges, { from_script = path, to_place_id = placeId })
+				end
+				for placeId in string.gmatch(source, "TeleportService%s*:%s*TeleportToPrivateServer%s*%((%d+)") do
+					table.insert(edges, { from_script = path, to_place_id = placeId, private = true })
+				end
+				if string.find(source, "TeleportService", 1, true) then
+					table.insert(nodes, { path = path, className = instance.ClassName })
+				end
+			end
+		end
+		for _, child in ipairs(instance:GetChildren()) do
+			scanForTeleports(child, path .. "." .. child.Name)
+		end
+	end
+
+	scanForTeleports(game, "game")
+	return { nodes = nodes, edges = edges }
+end
+
+local function getPackageInfo(_params)
+	local packages = {}
+
+	local function scanForPackages(instance, path)
+		if instance.ClassName == "PackageLink" then
+			local parent = instance.Parent
+			table.insert(packages, {
+				path = path,
+				parent_name = parent and parent.Name or "unknown",
+				parent_class = parent and parent.ClassName or "unknown",
+				package_id = instance.PackageId,
+				version_number = instance.VersionNumber,
+				auto_update = instance.AutoUpdate,
+			})
+		end
+		for _, child in ipairs(instance:GetChildren()) do
+			scanForPackages(child, path .. "." .. child.Name)
+		end
+	end
+
+	scanForPackages(game, "game")
+	return { packages = packages }
+end
+
 local function getScreenshot(params)
 	local viewport = params.viewport or "game"
 	return { pngBase64 = "", viewport = viewport }
@@ -539,8 +916,40 @@ local function processCommand(cmd)
 			return runTests(params)
 		elseif command == "get_test_results" then
 			return getTestResults(params)
+		elseif command == "execute_code" then
+			return executeCode(params)
+		elseif command == "set_script_source" then
+			return setScriptSource(params)
 		elseif command == "get_script_source" then
 			return getScriptSource(params)
+		elseif command == "create_instance" then
+			return createInstance(params)
+		elseif command == "delete_instance" then
+			return deleteInstance(params)
+		elseif command == "clone_instance" then
+			return cloneInstance(params)
+		elseif command == "move_instance" then
+			return moveInstance(params)
+		elseif command == "set_instance_property" then
+			return setInstanceProperty(params)
+		elseif command == "get_children" then
+			return getChildren(params)
+		elseif command == "get_selection" then
+			return getSelection(params)
+		elseif command == "manage_tags" then
+			return manageTags(params)
+		elseif command == "manage_attributes" then
+			return manageAttributes(params)
+		elseif command == "start_playtest" then
+			return startPlaytest(params)
+		elseif command == "stop_playtest" then
+			return stopPlaytest(params)
+		elseif command == "get_output" then
+			return getOutput(params)
+		elseif command == "teleport_graph" then
+			return getTeleportGraph(params)
+		elseif command == "package_info" then
+			return getPackageInfo(params)
 		elseif command == "get_screenshot" then
 			return getScreenshot(params)
 		else
