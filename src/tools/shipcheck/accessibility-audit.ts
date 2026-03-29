@@ -85,7 +85,13 @@ registerTool({
         node.className === "ScrollingFrame" ||
         node.className === "ViewportFrame"
       ) {
-        const properties = await client.getProperties(path);
+        let properties: Record<string, RobloxPropertyValue>;
+        try {
+          properties = await client.getProperties(path);
+        } catch {
+          await Promise.all(node.children.map((child) => visit(child, path)));
+          return;
+        }
         const width = getNumber(properties["AbsoluteSize"], "x");
         const height = getNumber(properties["AbsoluteSize"], "y");
         const textSize = typeof properties["TextSize"] === "number" ? properties["TextSize"] : null;

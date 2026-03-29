@@ -28,7 +28,7 @@ export class StudioBridgeClient {
   constructor(options?: StudioBridgeOptions) {
     this.host = options?.host ?? "localhost";
     this.port = options?.port ?? 33796;
-    this.timeout = options?.timeout ?? 10_000;
+    this.timeout = options?.timeout ?? 45_000;
   }
 
   async ping(): Promise<{ ok: boolean; version?: string }> {
@@ -92,36 +92,8 @@ export class StudioBridgeClient {
   }
 
   async getProperties(target: string): Promise<Record<string, RobloxPropertyValue>> {
-    const knownRoots = new Set([
-      "game",
-      "DataModel",
-      "Workspace",
-      "Players",
-      "ServerScriptService",
-      "ReplicatedStorage",
-      "ReplicatedFirst",
-      "StarterGui",
-      "StarterPack",
-      "StarterPlayer",
-      "ServerStorage",
-      "Lighting",
-      "Chat",
-      "TestService",
-      "SoundService",
-      "Teams",
-      "TextChatService",
-      "LocalizationService",
-      "MaterialService",
-    ]);
-    const normalizedTarget = target.replaceAll("/", ".");
-    const firstSegment = normalizedTarget.split(".")[0] ?? "";
-    if (knownRoots.has(firstSegment)) {
-      return this.request<Record<string, RobloxPropertyValue>>(
-        `/api/instance/properties?path=${encodeURIComponent(target)}`,
-      );
-    }
     return this.request<Record<string, RobloxPropertyValue>>(
-      `/api/instance/${encodeURIComponent(target)}/properties`,
+      `/api/instance/properties?path=${encodeURIComponent(target)}`,
     );
   }
 

@@ -85,7 +85,15 @@ registerTool({
 
     const result = await client.applyPatch(
       {
-        operations,
+        operations: operations.map((op) => {
+          if (op.type === "create") {
+            const segments = op.target_path.split(/[./]/u).filter(Boolean);
+            const name = segments[segments.length - 1] ?? op.target_path;
+            const parentPath = segments.slice(0, -1).join(".");
+            return { ...op, parent_path: parentPath, name };
+          }
+          return op;
+        }),
         ...(input.description ? { description: input.description } : {}),
       },
       false,

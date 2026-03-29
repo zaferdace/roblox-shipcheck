@@ -64,7 +64,13 @@ registerTool({
   schema,
   handler: async (input): Promise<ResponseEnvelope<LightingResult>> => {
     const client = new StudioBridgeClient({ port: input.studio_port });
-    const result = await client.applyLighting(input.preset, input.custom_config);
+    const config = input.custom_config
+      ? { ...input.custom_config }
+      : undefined;
+    if (config?.lighting) {
+      delete (config.lighting as Record<string, unknown>)["Technology"];
+    }
+    const result = await client.applyLighting(input.preset, config);
     return createResponseEnvelope(lightingResultSchema.parse(result), {
       source: sourceInfo({ studio_port: input.studio_port }),
     });
