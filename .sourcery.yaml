@@ -1,0 +1,10 @@
+reviews:
+  request_review: true
+  approve: false
+  auto_merge: false
+  ignore_paths:
+    - dist/**
+    - node_modules/**
+    - plugin/**
+    - "*.json"
+    - "*.md"
