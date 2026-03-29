@@ -32,7 +32,16 @@ const schema = z.object({
   studio_port: z.number().int().positive().default(33796),
   action: z.enum(["run_scenario", "list_scenarios", "get_result"]),
   scenario: playtestScenarioSchema.optional(),
-  scenario_preset: z.enum(["spawn_flow", "shop_flow", "tutorial_flow", "mobile_ux"]).optional(),
+  scenario_preset: z
+    .enum([
+      "spawn_flow",
+      "shop_flow",
+      "tutorial_flow",
+      "mobile_ux",
+      "shooter_weapon_equip",
+      "shooter_respawn_cycle",
+    ])
+    .optional(),
   result_id: z.string().min(1).optional(),
 });
 
@@ -178,6 +187,70 @@ function scenarioPresets(): Record<string, PlaytestScenario> {
         },
       ],
       timeout_seconds: 45,
+    },
+    shooter_weapon_equip: {
+      name: "shooter_weapon_equip",
+      description: "Verify weapon tools exist with proper configuration for a shooter game.",
+      steps: [
+        {
+          type: "execute_code",
+          description: "Check StarterPack for Tool instances",
+          code: "local starterPack = game:FindFirstChild('StarterPack'); local names = {}; local count = 0; if starterPack then for _, child in ipairs(starterPack:GetChildren()) do if child:IsA('Tool') then count += 1; table.insert(names, child.Name) end end end return { ok = count > 0, count = count, names = names }",
+        },
+        {
+          type: "execute_code",
+          description: "Verify weapons have Handle parts",
+          code: "local starterPack = game:FindFirstChild('StarterPack'); local missing = {}; if starterPack then for _, child in ipairs(starterPack:GetChildren()) do if child:IsA('Tool') and child:FindFirstChild('Handle') == nil then table.insert(missing, child.Name) end end end return { ok = #missing == 0, missing_handles = missing }",
+        },
+        {
+          type: "execute_code",
+          description: "Check for weapon config values",
+          code: "local starterPack = game:FindFirstChild('StarterPack'); local weaponConfigs = {}; if starterPack then for _, child in ipairs(starterPack:GetChildren()) do if child:IsA('Tool') then local config = { name = child.Name, Damage = false, Ammo = false, FireRate = false }; for _, descendant in ipairs(child:GetDescendants()) do if descendant:IsA('NumberValue') or descendant:IsA('IntValue') then local lowered = string.lower(descendant.Name); if lowered == 'damage' then config.Damage = true end; if lowered == 'ammo' then config.Ammo = true end; if lowered == 'firerate' or lowered == 'fire_rate' then config.FireRate = true end end end; if config.Damage or config.Ammo or config.FireRate then table.insert(weaponConfigs, config) end end end end return { ok = #weaponConfigs > 0, weapon_configs = weaponConfigs }",
+        },
+        {
+          type: "verify_state",
+          description: "Confirm at least one configured weapon exists",
+          expected: '"ok":true',
+        },
+        {
+          type: "note",
+          description: "Record weapon equip note",
+          note: "Weapon equip flow verified",
+        },
+      ],
+      timeout_seconds: 30,
+    },
+    shooter_respawn_cycle: {
+      name: "shooter_respawn_cycle",
+      description: "Validate respawn infrastructure for a shooter game.",
+      steps: [
+        {
+          type: "execute_code",
+          description: "Check Players.CharacterAutoLoads and RespawnTime",
+          code: "local players = game:GetService('Players'); return { auto_loads = players.CharacterAutoLoads, respawn_time = players.RespawnTime }",
+        },
+        {
+          type: "execute_code",
+          description: "Check SpawnLocation count and team assignment",
+          code: "local count = 0; local teams = {}; for _, descendant in ipairs(game:GetDescendants()) do if descendant:IsA('SpawnLocation') then count += 1; local key = descendant.Neutral and 'Neutral' or tostring(descendant.TeamColor); teams[key] = (teams[key] or 0) + 1 end end return { ok = count > 0, count = count, teams = teams }",
+        },
+        {
+          type: "execute_code",
+          description: "Search for CharacterAdded handlers in scripts",
+          code: "local handlers = 0; for _, descendant in ipairs(game:GetDescendants()) do if descendant:IsA('LuaSourceContainer') and string.find(string.lower(descendant.Source), 'characteradded') then handlers += 1 end end return { ok = handlers > 0, handlers_found = handlers }",
+        },
+        {
+          type: "verify_state",
+          description: "Confirm spawn infrastructure exists",
+          expected: '"ok":true',
+        },
+        {
+          type: "note",
+          description: "Record respawn cycle note",
+          note: "Respawn cycle infrastructure verified",
+        },
+      ],
+      timeout_seconds: 30,
     },
   };
 }

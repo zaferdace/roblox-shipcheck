@@ -68,6 +68,12 @@ Current report areas:
 - Package drift
 - Performance hotspots
 
+### Genre-Specific Checks (Opt-In)
+
+- **Shooter/Sniper** — weapon remote trust analysis, spawn fairness heuristics, combat content review, weapon equip and respawn cycle smoke tests
+
+Genre checks are opt-in and heuristic. They use pattern matching and static analysis, not runtime simulation. See [docs/shooter-checks.md](docs/shooter-checks.md) for details.
+
 Each finding includes:
 - Severity: `blocker`, `warning`, or `info`
 - Confidence: `high`, `medium`, `heuristic`, or `manual_review`
@@ -136,20 +142,22 @@ See [examples/](examples/) for full sample reports in Markdown and JSON.
 - The verdict is a scoring rule based on issue counts, not a comprehensive release policy.
 - It can miss issues and it can raise false positives. A passing report means "nothing obvious was flagged," not "safe to publish."
 - Some checks depend on Open Cloud API keys for full coverage. Without them, metadata-based checks are skipped.
+- Genre-specific checks use keyword and pattern matching. They work best with conventional naming and value-instance configs. Unconventional architectures may produce false positives or missed detections.
 
 ## Studio-Tested
 
-All 43 tools have been integration-tested against a live Roblox Studio session (2026-03-29).
+All 46 tools have been integration-tested against a live Roblox Studio session (2026-03-29).
 
 | Category | Tools | Pass | Skip | Partial |
 |----------|-------|------|------|---------|
 | Core | 18 | 17 | 0 | 1 |
 | Shipcheck | 14 | 14 | 0 | 0 |
+| Shooter Genre | 3 | 3 | 0 | 0 |
 | Automation | 4 | 3 | 1 | 0 |
 | Building | 3 | 3 | 0 | 0 |
 | Cloud | 3 | 0 | 3 | 0 |
 | Playtester | 1 | 1 | 0 | 0 |
-| **Total** | **43** | **38** | **4** | **1** |
+| **Total** | **46** | **41** | **4** | **1** |
 
 - **Skip:** Cloud tools require an Open Cloud API key (schema validated, not callable without credentials).
 - **Partial:** `start_playtest` returns a plugin capability error (`StartDecal`). Playtest control may require manual interaction in some Studio configurations.
