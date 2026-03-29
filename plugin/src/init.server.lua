@@ -5,12 +5,30 @@ local PLUGIN_VERSION = "0.1.0"
 local MAX_JSON_BREADTH = 100
 local MAX_TEST_RESULTS = 50
 
+print("[RBX-MCP] Plugin loading...")
+
+local ok, err = pcall(function()
+	game:GetService("HttpService").HttpEnabled = true
+end)
+if not ok then
+	warn("[RBX-MCP] Could not enable HttpService: " .. tostring(err))
+end
+
 local HttpService = game:GetService("HttpService")
-local ScriptEditorService = game:GetService("ScriptEditorService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local TestService = game:GetService("TestService")
 local CollectionService = game:GetService("CollectionService")
 local Lighting = game:GetService("Lighting")
+
+local ScriptEditorService
+local hasScriptEditor, scriptEditorErr = pcall(function()
+	ScriptEditorService = game:GetService("ScriptEditorService")
+end)
+if not hasScriptEditor then
+	warn("[RBX-MCP] ScriptEditorService not available: " .. tostring(scriptEditorErr))
+end
+
+print("[RBX-MCP] Services loaded successfully")
 
 local sessionToken = nil
 local connected = false

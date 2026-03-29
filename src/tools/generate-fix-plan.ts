@@ -66,6 +66,27 @@ registerTool({
         },
         "Publishing goals benefit from a full audit.",
       );
+      addStep(
+        "rbx_shipcheck_report",
+        "Generate a unified shipcheck report with a verdict, issue list, and markdown summary.",
+        {
+          studio_port: input.studio_port,
+          output_format: "both" as const,
+          ...(input.api_key ? { api_key: input.api_key } : {}),
+          ...(input.universe_id ? { universe_id: input.universe_id } : {}),
+        },
+        "Ship and release goals benefit from a single report that consolidates audit signals.",
+      );
+      addStep(
+        "rbx_content_maturity_check",
+        "Run a content maturity review for violence, language, social links, and gambling risk indicators.",
+        {
+          studio_port: input.studio_port,
+          ...(input.api_key ? { api_key: input.api_key } : {}),
+          ...(input.universe_id ? { universe_id: input.universe_id } : {}),
+        },
+        "Shipping goals should include an explicit content maturity review.",
+      );
     }
     if (/diff|changed|baseline|compare|release/u.test(goal)) {
       addStep(
@@ -203,6 +224,28 @@ registerTool({
         "Inspect recent Studio output for runtime errors during the playtest.",
         { studio_port: input.studio_port, limit: 100 },
         "Playtest debugging depends on runtime output.",
+      );
+      addStep(
+        "rbx_playtester",
+        "Run a guided playtest scenario and collect structured evidence.",
+        {
+          studio_port: input.studio_port,
+          action: "run_scenario" as const,
+          scenario_preset: "spawn_flow" as const,
+        },
+        "Scenario-based playtests provide reusable verification and evidence capture.",
+      );
+    }
+    if (/maturity|age rating|violence|profanity|social link|gambling/u.test(goal)) {
+      addStep(
+        "rbx_content_maturity_check",
+        "Scan the experience for heuristic content maturity and policy review risks.",
+        {
+          studio_port: input.studio_port,
+          ...(input.api_key ? { api_key: input.api_key } : {}),
+          ...(input.universe_id ? { universe_id: input.universe_id } : {}),
+        },
+        "The goal mentions age-rating or content-policy risk areas.",
       );
     }
     if (/teleport|place transition|portal/u.test(goal)) {
