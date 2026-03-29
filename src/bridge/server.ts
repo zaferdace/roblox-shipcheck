@@ -507,7 +507,8 @@ export function startBridgeServer(
       if (
         request.method === "GET" &&
         pathname.startsWith("/api/instance/") &&
-        pathname.endsWith("/properties")
+        pathname.endsWith("/properties") &&
+        pathname !== "/api/instance/properties"
       ) {
         if (!requirePluginSession(request, response)) {
           return;

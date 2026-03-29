@@ -215,11 +215,20 @@ function collectScripts(root: InstanceNode): Record<string, string> {
   return scripts;
 }
 
-async function hydrateProperties(client: StudioBridgeClient, node: InstanceNode): Promise<void> {
+async function hydrateProperties(
+  client: StudioBridgeClient,
+  node: InstanceNode,
+  parentPath?: string,
+): Promise<void> {
+  const path = parentPath ? `${parentPath}.${node.name}` : node.name;
   if (!node.properties) {
-    node.properties = await client.getProperties(node.id);
+    try {
+      node.properties = await client.getProperties(path);
+    } catch {
+      node.properties = {};
+    }
   }
-  await Promise.all(node.children.map((child) => hydrateProperties(client, child)));
+  await Promise.all(node.children.map((child) => hydrateProperties(client, child, path)));
 }
 
 async function captureBaseline(client: StudioBridgeClient): Promise<BaselineSnapshot> {
