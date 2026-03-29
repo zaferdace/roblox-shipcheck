@@ -1,7 +1,7 @@
 {
   "name": "roblox-shipcheck",
   "version": "0.1.0",
-  "description": "Static release checks and scenario smoke tests for Roblox experiences. Catch publish blockers, maturity flags, and structural issues before release.",
+  "description": "Heuristic release checks and smoke tests for Roblox projects via MCP",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -4,76 +4,24 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)
 
-**Static release checks and scenario smoke tests for Roblox experiences.**
+**Heuristic release checks for Roblox projects, with a report you can act on.**
 
-Catch publish blockers, maturity flags, and structural issues before release. Get a Markdown report instead of vague AI advice. Built on MCP.
+`roblox-shipcheck` inspects a Roblox place and returns a release-readiness report in Markdown and JSON. It is built for pre-release review: security smells, DataStore mistakes, mobile/UI issues, marketplace wiring, localization gaps, teleport problems, package drift, and content-review flags.
 
----
-
-## What it does
-
-### Shipcheck — Release audit
-
-Run checks against your Roblox project. Get a structured report with findings, severity, confidence, and recommendations.
-
-```
+```text
 "Run shipcheck on my experience"
-→ Scans scripts, UI, DataStores, remotes, marketplace setup
-→ Flags issues with severity (blocker/warning/info) and confidence level
-→ Returns SHIP / HOLD / REVIEW verdict with 0-100 score
-→ Outputs Markdown + JSON report
+→ Returns a report with findings, severity, confidence, recommendations
+→ Produces a verdict: SHIP / REVIEW / HOLD
+→ Outputs Markdown + JSON
 ```
 
-**10 checks in the unified report:**
-
-| Check | What it inspects |
-|-------|-----------------|
-| Content maturity | Heuristic keyword scan for violence, language, social links, gambling mechanics — flags for manual review |
-| Remote security | RemoteEvents without validation, missing rate limiting, trust boundary patterns |
-| DataStore safety | Unwrapped pcall, hardcoded keys, missing retry logic, budget unawareness |
-| Marketplace compliance | ProcessReceipt handling, idempotency, product references |
-| Mobile UI readiness | Touch targets, safe areas, overlap, text readability |
-| Accessibility | Contrast ratios, touch targets, text scaling |
-| Localization coverage | Hardcoded text, missing locale entries |
-| Teleport graph | Dead PlaceIds, circular teleports, missing error handling |
-| Package drift | Stale packages, version mismatches, disabled auto-update |
-| Performance hotspots | Instance counts, script complexity, physics pressure |
-
-Every finding includes:
-- **Severity**: blocker / warning / info
-- **Confidence**: high / medium / heuristic / manual_review
-- **Remediation**: auto / assisted / manual
-
-> Confidence labels reflect rule strength, not statistical accuracy. All content maturity findings require human review.
-
-### Smoke Tests — Structural verification
-
-Run scenario-based checks to verify your experience has expected structure.
-
-```
-"Run the spawn flow smoke test"
-→ Checks StarterPlayer, SpawnLocation, starter scripts exist
-→ Verifies shop UI and receipt handling structure
-→ Reports pass/fail per step
-```
-
-**4 built-in presets:**
-- `spawn_flow` — Player spawn setup, starter scripts, spawn locations
-- `shop_flow` — MarketplaceService usage, ProcessReceipt, shop UI presence
-- `tutorial_flow` — Tutorial scripts, state persistence setup
-- `mobile_ux` — Touch targets, input compatibility, GUI sizing
-
-> Smoke tests verify structural presence, not runtime gameplay. They check "does the shop system exist and have receipt handling?" not "can a player buy an item."
-
----
+Smoke tests are included for basic structural verification, but shipcheck is the main product.
 
 ## Quick Start
 
-**1. Install the Studio plugin**
+1. Install the Studio plugin from [Releases](https://github.com/zaferdace/roblox-shipcheck/releases) and enable it in Roblox Studio.
+2. Add this MCP server to your client config:
 
-Download `RobloxWorkflowMCP.rbxm` from [Releases](https://github.com/zaferdace/roblox-shipcheck/releases) and place it in your Roblox Studio plugins folder.
-
-**2. Add to your MCP config:**
 ```json
 {
   "mcpServers": {
@@ -85,9 +33,36 @@ Download `RobloxWorkflowMCP.rbxm` from [Releases](https://github.com/zaferdace/r
 }
 ```
 
-**3. Connect:** Open Studio, click **"Toggle Connection"** in the plugin toolbar.
+3. Open Studio and click **Toggle Connection** in the plugin toolbar.
 
----
+## What It Checks
+
+Shipcheck runs a focused release audit and returns one report.
+
+Current report areas:
+- Content maturity flags for manual review
+- Remote security patterns
+- DataStore safety issues
+- Marketplace receipt and product wiring
+- Mobile UI readiness
+- Accessibility basics
+- Localization coverage
+- Teleport graph issues
+- Package drift
+- Performance hotspots
+
+Each finding includes:
+- Severity: `blocker`, `warning`, or `info`
+- Confidence: `high`, `medium`, `heuristic`, or `manual_review`
+- Recommendation: what to inspect or fix next
+
+Smoke tests are available as secondary checks for a few common flows:
+- `spawn_flow`
+- `shop_flow`
+- `tutorial_flow`
+- `mobile_ux`
+
+These are structural smoke tests, not gameplay automation.
 
 ## Sample Report
 
@@ -97,14 +72,14 @@ Download `RobloxWorkflowMCP.rbxm` from [Releases](https://github.com/zaferdace/r
 **Verdict:** REVIEW — Score: 72/100
 
 ## Summary
-- 🔴 Blockers: 0
-- 🟡 Warnings: 3
-- ℹ️ Info: 2
-- 👁 Manual review needed: 2
+- Blockers: 0
+- Warnings: 3
+- Info: 2
+- Manual review needed: 2
 
 ## Issues
 
-### 🟡 Warnings
+### Warnings
 #### [remote-001] Unvalidated RemoteEvent handler
 **Confidence:** high | **Category:** security | **Remediation:** assisted
 Server handler for "PurchaseRequest" does not validate argument types.
@@ -113,7 +88,7 @@ Server handler for "PurchaseRequest" does not validate argument types.
 
 #### [mobile-001] Touch target below minimum size
 **Confidence:** high | **Category:** mobile | **Remediation:** auto
-TextButton "BuyBtn" is 32x28px, below 44px minimum for reliable touch input.
+TextButton "BuyBtn" is 32x28px, below 44x44 for reliable touch input.
 **Evidence:** StarterGui.ShopUI.BuyBtn
 **Recommendation:** Increase button size to at least 44x44.
 
@@ -124,76 +99,25 @@ Script contains "discord.gg" reference.
 **Recommendation:** Verify all external references for policy compliance.
 ```
 
----
-
-## Why not just use Roblox's built-in MCP?
-
-Built-in MCP gives you primitives — create, read, update, delete, playtest.
-
-`roblox-shipcheck` adds a **check-and-report layer**:
-
-| Need | Built-in MCP | Shipcheck |
-|------|:--:|:--:|
-| Create a Part | Yes | Yes |
-| Know if RemoteEvents are exploitable | - | Check |
-| Know if DataStore calls handle failures | - | Check |
-| Know if UI works on mobile | - | Check |
-| Flag content maturity risks for review | - | Check |
-| Get a release report with verdict | - | Report |
-| Verify spawn/shop/tutorial structure | - | Smoke test |
-
----
+See [examples/](examples/) for full sample reports in Markdown and JSON.
 
 ## Limitations
 
-**Be aware of what this tool can and cannot do:**
+Read this section literally. This tool is useful, but narrow.
 
-- **Content maturity checks are heuristic.** They scan for keywords and patterns. They cannot determine actual content policy violations. All findings require human review.
-- **Smoke tests verify structure, not gameplay.** They check if systems exist and are wired correctly, not whether a player can complete a flow at runtime.
-- **Confidence labels are rule-based.** "High confidence" means the rule is specific and reliable, not that the finding is statistically validated.
-- **The verdict is arithmetic.** SHIP/HOLD/REVIEW is computed from issue counts and severity weights, not from a comprehensive release policy.
-- **No autonomous gameplay.** The tool does not play your game, simulate users, or test runtime behavior. It inspects the DataModel and script sources.
-- **Plugin runs on localhost only.** Bridge server binds to `127.0.0.1:33796`. No remote access.
-- **Some checks need Open Cloud API keys.** Experience metadata, asset status, and place publishing require Roblox Open Cloud credentials passed per-call.
-
----
+- It does not play your game. It inspects project structure and script source.
+- Content maturity checks are heuristic only. They flag review candidates, not policy violations.
+- Smoke tests verify expected setup exists. They do not prove a player flow works.
+- The verdict is a scoring rule, not a guarantee that a release is safe to ship.
+- It can miss issues and it can raise false positives. A passing report means "nothing obvious was flagged by these checks," not "safe to publish."
 
 ## Architecture
 
-```
-AI Client ←stdio→ MCP Server ←http→ Bridge Server ←long-poll→ Studio Plugin
-              (Node.js)         (same process)        (Lua, outbound)
-```
-
-```
-src/tools/
-├── shipcheck/      10 audit checks + content maturity + report generator
-├── playtester/     Scenario smoke test engine with presets
-├── core/           16 Studio primitives (CRUD, scripts, tags, playtest)
-├── automation/     Safe patches, fix plans, publish, test runner
-├── building/       UI builder, lighting presets, terrain generation
-└── cloud/          Open Cloud API tools (experience info, assets, products)
+```text
+MCP Client <-stdio-> MCP Server <-http-> Bridge Server <-long-poll-> Studio Plugin
 ```
 
-The plugin communicates via HTTP long-polling. All mutations use `ChangeHistoryService` for full undo support. Session tokens authenticate the connection.
-
----
-
-## Prompt Cookbook
-
-**"Can I ship this?"**
-> "Run `rbx_shipcheck_report` with all checks."
-
-**"Check content maturity risks"**
-> "Run `rbx_content_maturity_check` on my experience."
-
-**"Verify my spawn flow"**
-> "Run `rbx_playtester` with the `spawn_flow` preset."
-
-**"What changed since last publish?"**
-> "Save a baseline with `rbx_release_diff`, then run it again after changes."
-
----
+The server runs locally. The plugin connects over localhost. The plugin inspects the current Studio state and returns findings through the MCP server.
 
 ## Development
 
@@ -204,25 +128,17 @@ npm install
 npm run build
 ```
 
-| Script | Description |
-|--------|-------------|
-| `npm run build` | Compile TypeScript |
-| `npm run dev` | Watch mode |
-| `npm run check` | Full gate: tsc + eslint + prettier + publint |
-
----
+Useful scripts:
+- `npm run build` — compile TypeScript
+- `npm run dev` — watch mode
+- `npm run check` — full gate (tsc + eslint + prettier + publint)
 
 ## Roadmap
 
-- [ ] npm publish (beta)
-- [ ] Sample reports in `examples/`
-- [ ] Demo video (shipcheck → smoke test → report)
-- [ ] CI/CD integration mode
-- [ ] Roblox Creator Marketplace plugin listing
-- [ ] More smoke test presets
-- [ ] Custom scenario DSL
-
----
+- More report examples and sample fixtures
+- Better baseline and diff support
+- CI-friendly report export
+- More targeted smoke test presets
 
 ## Contributing
 
