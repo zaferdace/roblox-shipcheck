@@ -5,13 +5,33 @@ import type { InstanceNode, RobloxPropertyValue } from "../../../../types/roblox
 import type { ResponseEnvelope } from "../../../../types/tools.js";
 import { registerTool } from "../../../registry.js";
 
+const categoryKeys = [
+  "violence_explicit",
+  "violence_moderate",
+  "weapon_refs",
+  "social_risk",
+] as const;
+
+type CategoryKey = (typeof categoryKeys)[number];
+type CustomKeywords = {
+  [Key in CategoryKey]?: string[] | undefined;
+};
+
 const schema = z.object({
   studio_port: z.number().int().positive().default(33796),
+  custom_keywords: z
+    .object({
+      violence_explicit: z.array(z.string()).optional(),
+      violence_moderate: z.array(z.string()).optional(),
+      weapon_refs: z.array(z.string()).optional(),
+      social_risk: z.array(z.string()).optional(),
+    } satisfies z.ZodRawShape)
+    .optional(),
 });
 
 interface CombatContentMaturityIssue {
   severity: "warning" | "info";
-  category: "violence_explicit" | "violence_moderate" | "weapon_refs" | "social_risk";
+  category: CategoryKey;
   rule: "combat_content_match";
   message: string;
   element_path: string;
@@ -23,13 +43,13 @@ interface CombatContentMaturityResult {
   scripts_scanned: number;
   ui_elements_scanned: number;
   findings_by_category: Record<
-    "violence_explicit" | "violence_moderate" | "weapon_refs" | "social_risk",
+    CategoryKey,
     number
   >;
   issues: CombatContentMaturityIssue[];
 }
 
-const categories = {
+const defaultCategories: Record<CategoryKey, string[]> = {
   violence_explicit: ["gore", "dismember", "decapitat", "mutilat", "torture", "execution"],
   violence_moderate: ["blood", "bleed", "corpse", "dead body", "body bag"],
   weapon_refs: [
@@ -44,7 +64,18 @@ const categories = {
     "rocket launcher",
   ],
   social_risk: ["discord.gg", "discord.com/invite", "youtube.com", "twitter.com", "tiktok.com"],
-} as const;
+};
+
+function buildCategories(
+  customKeywords?: CustomKeywords,
+): Record<CategoryKey, string[]> {
+  return Object.fromEntries(
+    categoryKeys.map((category) => [
+      category,
+      [...defaultCategories[category], ...(customKeywords?.[category] ?? [])],
+    ]),
+  ) as Record<CategoryKey, string[]>;
+}
 
 function renderValue(value: RobloxPropertyValue | undefined): string {
   if (typeof value === "string") {
@@ -77,7 +108,7 @@ function collectScriptPaths(root: InstanceNode): string[] {
 function pushIssue(
   issues: CombatContentMaturityIssue[],
   findingsByCategory: CombatContentMaturityResult["findings_by_category"],
-  category: keyof typeof categories,
+  category: CategoryKey,
   elementPath: string,
   match: string,
 ): void {
@@ -95,13 +126,12 @@ function pushIssue(
 function scanText(
   content: string,
   elementPath: string,
+  categories: Record<CategoryKey, string[]>,
   issues: CombatContentMaturityIssue[],
   findingsByCategory: CombatContentMaturityResult["findings_by_category"],
 ): void {
   const normalized = content.toLowerCase();
-  for (const [category, keywords] of Object.entries(categories) as Array<
-    [keyof typeof categories, readonly string[]]
-  >) {
+  for (const [category, keywords] of Object.entries(categories) as Array<[CategoryKey, string[]]>) {
     for (const keyword of keywords) {
       if (normalized.includes(keyword.toLowerCase())) {
         pushIssue(issues, findingsByCategory, category, elementPath, keyword);
@@ -115,6 +145,7 @@ export async function runCombatContentMaturity(
 ): Promise<ResponseEnvelope<CombatContentMaturityResult>> {
   const client = new StudioBridgeClient({ port: input.studio_port });
   await client.ping();
+  const categories = buildCategories(input.custom_keywords);
 
   const root = (await client.getChildren("game", 10)) as InstanceNode;
   const scriptPaths = collectScriptPaths(root);
@@ -129,7 +160,7 @@ export async function runCombatContentMaturity(
   for (const scriptPath of scriptPaths) {
     try {
       const script = await client.getScriptSource(scriptPath);
-      scanText(script.source, scriptPath, issues, findingsByCategory);
+      scanText(script.source, scriptPath, categories, issues, findingsByCategory);
     } catch {
       continue;
     }
@@ -145,7 +176,7 @@ export async function runCombatContentMaturity(
     if (text.trim().length === 0) {
       return;
     }
-    scanText(text, currentPath, issues, findingsByCategory);
+    scanText(text, currentPath, categories, issues, findingsByCategory);
   });
 
   return createResponseEnvelope(

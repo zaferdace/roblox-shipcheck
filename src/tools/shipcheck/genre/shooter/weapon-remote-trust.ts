@@ -9,6 +9,7 @@ const schema = z.object({
   studio_port: z.number().int().positive().default(33796),
   check_rate_limiting: z.boolean().default(true),
   check_type_validation: z.boolean().default(true),
+  server_script_root: z.string().min(1).default("ServerScriptService"),
 });
 
 interface WeaponRemoteTrustIssue {
@@ -64,6 +65,9 @@ export async function runWeaponRemoteTrust(
 ): Promise<ResponseEnvelope<WeaponRemoteTrustResult>> {
   const client = new StudioBridgeClient({ port: input.studio_port });
   await client.ping();
+  const serverScriptRoot = input.server_script_root.startsWith("game.")
+    ? input.server_script_root
+    : `game.${input.server_script_root}`;
 
   const remoteEventMatches = parseMatches(
     await client.searchInstances({
@@ -83,7 +87,10 @@ export async function runWeaponRemoteTrust(
   );
 
   const weaponRemotes = uniqueByPath([...remoteEventMatches, ...remoteFunctionMatches]).filter(
-    (match) => weaponRemotePattern.test(match.path),
+    (match) => {
+      const remoteName = match.path.split(".").pop() ?? match.path;
+      return weaponRemotePattern.test(remoteName);
+    },
   );
   const issues: WeaponRemoteTrustIssue[] = [];
 
@@ -95,7 +102,7 @@ export async function runWeaponRemoteTrust(
         search_type: "script_content",
         case_sensitive: false,
         max_results: 50,
-        root_path: "game.ServerScriptService",
+        root_path: serverScriptRoot,
       }),
     );
 
@@ -104,7 +111,7 @@ export async function runWeaponRemoteTrust(
         severity: "medium",
         remote_path: remote.path,
         rule: "no_server_handler",
-        message: `No ServerScriptService handler referencing ${remoteName} was found.`,
+        message: `No ${input.server_script_root} handler referencing ${remoteName} was found.`,
         suggestion: "Add a server-side remote handler and validate weapon actions before applying them.",
       });
       continue;

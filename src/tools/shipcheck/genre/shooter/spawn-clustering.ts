@@ -9,6 +9,8 @@ const schema = z.object({
   studio_port: z.number().int().positive().default(33796),
   min_spread_studs: z.number().min(1).default(30),
   check_team_balance: z.boolean().default(true),
+  min_height: z.number().default(-10),
+  max_height: z.number().default(1000),
 });
 
 interface SpawnClusteringIssue {
@@ -43,7 +45,11 @@ const searchMatchSchema = z.array(
 );
 
 function parseMatches(raw: unknown): StudioSearchMatch[] {
-  return searchMatchSchema.safeParse(raw).data ?? [];
+  const parsed = searchMatchSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`Failed to parse spawn search results: ${parsed.error.message}`);
+  }
+  return parsed.data;
 }
 
 function getVector3(value: RobloxPropertyValue | undefined): Vector3Like | null {
@@ -112,7 +118,7 @@ export async function runSpawnClustering(
       const name = typeof properties["Name"] === "string" ? properties["Name"] : match.path;
       spawns.push({ path: match.path, name, position, teamColor, neutral });
 
-      if (position && (position.y < -10 || position.y > 1000)) {
+      if (position && (position.y < input.min_height || position.y > input.max_height)) {
         issues.push({
           severity: "info",
           rule: "suspicious_spawn_height",
