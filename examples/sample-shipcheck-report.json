@@ -1,0 +1,86 @@
+{
+  "project_name": "Penguin Obby",
+  "timestamp": "2026-03-29T18:00:00Z",
+  "verdict": "REVIEW",
+  "overall_score": 68,
+  "summary": {
+    "blockers": 0,
+    "warnings": 4,
+    "info": 1,
+    "manual_review_needed": 2
+  },
+  "issues": [
+    {
+      "id": "remote-001",
+      "title": "Unvalidated RemoteEvent handler",
+      "summary": "Server handler for \"PurchaseRequest\" does not validate argument types.",
+      "severity": "warning",
+      "confidence": "high",
+      "category": "security",
+      "evidence": ["ServerScriptService.ShopHandler:14"],
+      "recommendation": "Add type checks for all RemoteEvent arguments.",
+      "remediation": "assisted",
+      "source_check": "remote_contract_audit"
+    },
+    {
+      "id": "mobile-001",
+      "title": "Touch target below minimum size",
+      "summary": "TextButton \"BuyBtn\" is 32x28px, below 44px minimum.",
+      "severity": "warning",
+      "confidence": "high",
+      "category": "mobile",
+      "evidence": ["StarterGui.ShopUI.MainFrame.BuyBtn"],
+      "recommendation": "Increase button size to at least 44x44.",
+      "remediation": "auto",
+      "source_check": "validate_mobile_ui"
+    },
+    {
+      "id": "datastore-001",
+      "title": "DataStore operations without pcall",
+      "summary": "DataStore calls detected without pcall protection.",
+      "severity": "warning",
+      "confidence": "high",
+      "category": "datastore",
+      "evidence": ["ServerScriptService.DataHandler:22"],
+      "recommendation": "Wrap DataStore requests in pcall with retry logic.",
+      "remediation": "assisted",
+      "source_check": "datastore_schema_guard"
+    },
+    {
+      "id": "maturity-001",
+      "title": "Social link reference detected",
+      "summary": "Script contains \"discord.gg\" reference.",
+      "severity": "warning",
+      "confidence": "manual_review",
+      "category": "social",
+      "evidence": ["ServerScriptService.WelcomeHandler:8"],
+      "recommendation": "Verify external references for policy compliance.",
+      "remediation": "manual",
+      "source_check": "content_maturity_check"
+    },
+    {
+      "id": "package-001",
+      "title": "Auto-update disabled on package",
+      "summary": "PackageLink \"UIComponents\" has AutoUpdate disabled.",
+      "severity": "info",
+      "confidence": "high",
+      "category": "packages",
+      "evidence": ["ReplicatedStorage.UIComponents.PackageLink"],
+      "recommendation": "Consider enabling auto-update.",
+      "remediation": "manual",
+      "source_check": "package_drift_audit"
+    }
+  ],
+  "checks_run": [
+    "remote_contract_audit",
+    "datastore_schema_guard",
+    "marketplace_compliance_audit",
+    "validate_mobile_ui",
+    "localization_coverage_audit",
+    "content_maturity_check",
+    "teleport_graph_audit",
+    "package_drift_audit",
+    "accessibility_audit",
+    "runtime_profiler"
+  ]
+}

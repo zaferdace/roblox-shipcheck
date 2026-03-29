@@ -4,81 +4,66 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue)
 ![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)
 
-**AI-assisted release readiness and guided playtesting for Roblox experiences.**
+**Static release checks and scenario smoke tests for Roblox experiences.**
 
-Catch publish blockers, maturity/compliance gaps, and gameplay flow issues before release. Built on top of MCP.
-
-> MCP is the engine, not the product. The value is in **Shipcheck** (release readiness) and **Playtester** (guided scenario testing).
+Catch publish blockers, maturity flags, and structural issues before release. Get a Markdown report instead of vague AI advice. Built on MCP.
 
 ---
 
-## What can it do?
+## What it does
 
-### Shipcheck — Is it safe to publish?
+### Shipcheck — Release audit
 
-Run one command. Get a structured report with blockers, warnings, and recommendations.
+Run checks against your Roblox project. Get a structured report with findings, severity, confidence, and recommendations.
 
 ```
-"Run shipcheck on my experience — can I publish?"
-→ Scans for security risks, mobile issues, DataStore problems,
-  content maturity flags, marketplace compliance, localization gaps
+"Run shipcheck on my experience"
+→ Scans scripts, UI, DataStores, remotes, marketplace setup
+→ Flags issues with severity (blocker/warning/info) and confidence level
 → Returns SHIP / HOLD / REVIEW verdict with 0-100 score
-→ Generates Markdown + JSON report
+→ Outputs Markdown + JSON report
 ```
 
-**13 automated checks:**
+**10 checks in the unified report:**
 
-| Check | What it catches |
+| Check | What it inspects |
 |-------|-----------------|
-| Content maturity | Violence, language, social links, gambling mechanics flagged for review |
-| Remote security | RemoteEvents without validation, missing rate limiting, trust boundary violations |
-| DataStore safety | Unwrapped pcall, hardcoded keys, missing retry logic |
-| Marketplace compliance | Missing ProcessReceipt, non-idempotent receipts, broken product references |
+| Content maturity | Heuristic keyword scan for violence, language, social links, gambling mechanics — flags for manual review |
+| Remote security | RemoteEvents without validation, missing rate limiting, trust boundary patterns |
+| DataStore safety | Unwrapped pcall, hardcoded keys, missing retry logic, budget unawareness |
+| Marketplace compliance | ProcessReceipt handling, idempotency, product references |
 | Mobile UI readiness | Touch targets, safe areas, overlap, text readability |
-| Accessibility | WCAG contrast, touch targets, text scaling |
+| Accessibility | Contrast ratios, touch targets, text scaling |
 | Localization coverage | Hardcoded text, missing locale entries |
-| Teleport graph | Dead PlaceIds, circular teleports |
-| Package drift | Stale packages, version mismatches |
+| Teleport graph | Dead PlaceIds, circular teleports, missing error handling |
+| Package drift | Stale packages, version mismatches, disabled auto-update |
 | Performance hotspots | Instance counts, script complexity, physics pressure |
-| Release diff | Baseline comparison, change risk scoring |
-| Publish readiness | Aggregated gate across all checks |
-| Structural sanity | Script placement, missing configuration |
 
 Every finding includes:
 - **Severity**: blocker / warning / info
 - **Confidence**: high / medium / heuristic / manual_review
 - **Remediation**: auto / assisted / manual
 
-### Playtester — Does the experience actually work?
+> Confidence labels reflect rule strength, not statistical accuracy. All content maturity findings require human review.
 
-Run guided scenarios against your experience. Get evidence and failure reports.
+### Smoke Tests — Structural verification
+
+Run scenario-based checks to verify your experience has expected structure.
 
 ```
-"Run the spawn flow test on my game"
-→ Checks StarterPlayer, SpawnLocation, starter scripts
-→ Verifies shop UI, receipt handling, tutorial system
-→ Reports pass/fail per step with evidence
+"Run the spawn flow smoke test"
+→ Checks StarterPlayer, SpawnLocation, starter scripts exist
+→ Verifies shop UI and receipt handling structure
+→ Reports pass/fail per step
 ```
 
 **4 built-in presets:**
-- `spawn_flow` — Player spawn, starter scripts, spawn locations
-- `shop_flow` — MarketplaceService, ProcessReceipt, shop UI
-- `tutorial_flow` — Tutorial scripts, state persistence
+- `spawn_flow` — Player spawn setup, starter scripts, spawn locations
+- `shop_flow` — MarketplaceService usage, ProcessReceipt, shop UI presence
+- `tutorial_flow` — Tutorial scripts, state persistence setup
 - `mobile_ux` — Touch targets, input compatibility, GUI sizing
 
-Custom scenarios supported via JSON spec.
-
-### Build — Let AI create, not just inspect
-
-```
-"Build a shop UI with title, scroll list, and buy buttons"
-"Apply sunset lighting"
-"Generate hilly terrain from -256 to 256"
-```
-
-### Full Studio Control — 16 CRUD primitives
-
-Execute code, read/write scripts, create/delete/clone/move instances, manage tags and attributes, control playtest, read console output.
+> Smoke tests verify structural presence, not runtime gameplay. They check "does the shop system exist and have receipt handling?" not "can a player buy an item."
 
 ---
 
@@ -88,7 +73,7 @@ Execute code, read/write scripts, create/delete/clone/move instances, manage tag
 
 Download `RobloxWorkflowMCP.rbxm` from [Releases](https://github.com/zaferdace/roblox-shipcheck/releases) and place it in your Roblox Studio plugins folder.
 
-**2. Add to your MCP config** (Claude Desktop, Cursor, VS Code, or any MCP client):
+**2. Add to your MCP config:**
 ```json
 {
   "mcpServers": {
@@ -100,72 +85,11 @@ Download `RobloxWorkflowMCP.rbxm` from [Releases](https://github.com/zaferdace/r
 }
 ```
 
-**3. Connect**
-
-Open Studio, click **"Toggle Connection"** in the plugin toolbar.
+**3. Connect:** Open Studio, click **"Toggle Connection"** in the plugin toolbar.
 
 ---
 
-## Architecture
-
-```
-AI Client ←stdio→ MCP Server ←http→ Bridge Server ←long-poll→ Studio Plugin
-              (Node.js)         (same process)        (Lua, outbound)
-```
-
-```
-src/
-├── tools/
-│   ├── core/           16 CRUD primitives
-│   ├── shipcheck/      13 audit & safety checks + report generator
-│   ├── playtester/     Scenario engine with presets
-│   ├── automation/     Safe patches, fix plans, publish, tests
-│   ├── building/       UI builder, lighting, terrain
-│   └── cloud/          Open Cloud API tools
-├── bridge/             HTTP bridge server (127.0.0.1:33796)
-├── roblox/             Studio Bridge + Open Cloud clients
-└── types/              Shared type definitions
-```
-
----
-
-## Why not just use Roblox's built-in MCP?
-
-Roblox's built-in MCP gives you **primitives** — create, read, update, delete, playtest.
-
-`roblox-shipcheck` gives you **workflows**:
-
-| Need | Built-in MCP | This project |
-|------|:--:|:--:|
-| Create a Part | Yes | Yes |
-| Know if RemoteEvents are exploitable | - | Shipcheck |
-| Know if DataStore calls will lose data | - | Shipcheck |
-| Know if your UI works on iPhone SE | - | Shipcheck |
-| Know if content maturity flags are needed | - | Shipcheck |
-| Know if you can safely publish | - | Shipcheck |
-| Test spawn → shop → tutorial flow | - | Playtester |
-| Get a Markdown release report | - | Shipcheck |
-| See what changed since last publish | - | Release diff |
-
----
-
-## Prompt Cookbook
-
-**"Can I ship this?"**
-> "Run `rbx_shipcheck_report` with all checks. Show me the verdict and any blockers."
-
-**"Test if my game works"**
-> "Run `rbx_playtester` with the spawn_flow preset. Then run shop_flow."
-
-**"What changed since last publish?"**
-> "Save a baseline with `rbx_release_diff`, then run it again after changes."
-
-**"Check content maturity risks"**
-> "Run `rbx_content_maturity_check` on my experience."
-
----
-
-## Shipcheck Report Example
+## Sample Report
 
 ```markdown
 # Shipcheck Report — My Obby Game
@@ -186,7 +110,88 @@ Roblox's built-in MCP gives you **primitives** — create, read, update, delete,
 Server handler for "PurchaseRequest" does not validate argument types.
 **Evidence:** ServerScriptService.ShopHandler:14
 **Recommendation:** Add type checks for all RemoteEvent arguments.
+
+#### [mobile-001] Touch target below minimum size
+**Confidence:** high | **Category:** mobile | **Remediation:** auto
+TextButton "BuyBtn" is 32x28px, below 44px minimum for reliable touch input.
+**Evidence:** StarterGui.ShopUI.BuyBtn
+**Recommendation:** Increase button size to at least 44x44.
+
+#### [maturity-001] Social link reference detected
+**Confidence:** manual_review | **Category:** social | **Remediation:** manual
+Script contains "discord.gg" reference.
+**Evidence:** ServerScriptService.WelcomeHandler:8
+**Recommendation:** Verify all external references for policy compliance.
 ```
+
+---
+
+## Why not just use Roblox's built-in MCP?
+
+Built-in MCP gives you primitives — create, read, update, delete, playtest.
+
+`roblox-shipcheck` adds a **check-and-report layer**:
+
+| Need | Built-in MCP | Shipcheck |
+|------|:--:|:--:|
+| Create a Part | Yes | Yes |
+| Know if RemoteEvents are exploitable | - | Check |
+| Know if DataStore calls handle failures | - | Check |
+| Know if UI works on mobile | - | Check |
+| Flag content maturity risks for review | - | Check |
+| Get a release report with verdict | - | Report |
+| Verify spawn/shop/tutorial structure | - | Smoke test |
+
+---
+
+## Limitations
+
+**Be aware of what this tool can and cannot do:**
+
+- **Content maturity checks are heuristic.** They scan for keywords and patterns. They cannot determine actual content policy violations. All findings require human review.
+- **Smoke tests verify structure, not gameplay.** They check if systems exist and are wired correctly, not whether a player can complete a flow at runtime.
+- **Confidence labels are rule-based.** "High confidence" means the rule is specific and reliable, not that the finding is statistically validated.
+- **The verdict is arithmetic.** SHIP/HOLD/REVIEW is computed from issue counts and severity weights, not from a comprehensive release policy.
+- **No autonomous gameplay.** The tool does not play your game, simulate users, or test runtime behavior. It inspects the DataModel and script sources.
+- **Plugin runs on localhost only.** Bridge server binds to `127.0.0.1:33796`. No remote access.
+- **Some checks need Open Cloud API keys.** Experience metadata, asset status, and place publishing require Roblox Open Cloud credentials passed per-call.
+
+---
+
+## Architecture
+
+```
+AI Client ←stdio→ MCP Server ←http→ Bridge Server ←long-poll→ Studio Plugin
+              (Node.js)         (same process)        (Lua, outbound)
+```
+
+```
+src/tools/
+├── shipcheck/      10 audit checks + content maturity + report generator
+├── playtester/     Scenario smoke test engine with presets
+├── core/           16 Studio primitives (CRUD, scripts, tags, playtest)
+├── automation/     Safe patches, fix plans, publish, test runner
+├── building/       UI builder, lighting presets, terrain generation
+└── cloud/          Open Cloud API tools (experience info, assets, products)
+```
+
+The plugin communicates via HTTP long-polling. All mutations use `ChangeHistoryService` for full undo support. Session tokens authenticate the connection.
+
+---
+
+## Prompt Cookbook
+
+**"Can I ship this?"**
+> "Run `rbx_shipcheck_report` with all checks."
+
+**"Check content maturity risks"**
+> "Run `rbx_content_maturity_check` on my experience."
+
+**"Verify my spawn flow"**
+> "Run `rbx_playtester` with the `spawn_flow` preset."
+
+**"What changed since last publish?"**
+> "Save a baseline with `rbx_release_diff`, then run it again after changes."
 
 ---
 
@@ -209,14 +214,19 @@ npm run build
 
 ## Roadmap
 
-- [ ] npm publish
-- [ ] Demo video (60s: shipcheck → playtester → report)
-- [ ] Custom scenario editor
-- [ ] CI/CD integration (shipcheck in GitHub Actions)
+- [ ] npm publish (beta)
+- [ ] Sample reports in `examples/`
+- [ ] Demo video (shipcheck → smoke test → report)
+- [ ] CI/CD integration mode
 - [ ] Roblox Creator Marketplace plugin listing
-- [ ] More playtest presets (PvP, economy, social)
+- [ ] More smoke test presets
+- [ ] Custom scenario DSL
 
 ---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -1,7 +1,7 @@
 {
   "name": "roblox-shipcheck",
   "version": "0.1.0",
-  "description": "AI-assisted release readiness and guided playtesting for Roblox experiences. Catch publish blockers, maturity gaps, and gameplay flow issues before release.",
+  "description": "Static release checks and scenario smoke tests for Roblox experiences. Catch publish blockers, maturity flags, and structural issues before release.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
