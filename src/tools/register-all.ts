@@ -41,3 +41,4 @@ import "./building/terrain-generate.js";
 import "./building/ui-builder.js";
 import "./shipcheck/validate-mobile-ui.js";
 import "./shipcheck/shipcheck-report.js";
+import "./shipcheck/genre/shooter/index.js";
