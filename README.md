@@ -17,8 +17,20 @@
 
 ## Quick Start
 
-1. Install the Studio plugin from [Releases](https://github.com/zaferdace/roblox-shipcheck/releases) and enable it in Roblox Studio.
-2. Add this MCP server to your client config:
+### Step 1: Install the Studio Plugin
+
+1. Go to the [Releases page](https://github.com/zaferdace/roblox-shipcheck/releases)
+2. Download `RobloxShipcheck.rbxm` from the latest release
+3. Find your Roblox Studio plugins folder:
+   - **Windows:** `%LOCALAPPDATA%\Roblox\Plugins\`
+   - **Mac:** `~/Documents/Roblox/Plugins/`
+   - **Or in Studio:** go to the **Plugins** tab → click **Plugins Folder** to open it
+4. Copy `RobloxShipcheck.rbxm` into that folder
+5. Restart Roblox Studio — you should see a **"Roblox Workflow MCP"** toolbar
+
+### Step 2: Add the MCP Server
+
+Add this to your AI client's MCP config file (works with Claude Desktop, Cursor, VS Code + Copilot, Windsurf, Cline):
 
 ```json
 {
@@ -31,7 +43,14 @@
 }
 ```
 
-3. Open Studio and click **Toggle Connection** in the plugin toolbar.
+> You need [Node.js](https://nodejs.org/) 18 or newer installed. `npx` will download the server automatically.
+
+### Step 3: Connect
+
+1. Open a place in Roblox Studio
+2. Click the **"Toggle Connection"** button in the plugin toolbar
+3. The Studio Output window should show: `[RBX-MCP] Connected to bridge`
+4. Now you can ask your AI client to run shipcheck
 
 ## What It Checks
 
