@@ -86,9 +86,16 @@ export function findNodeByPath(root: InstanceNode, targetPath: string): Instance
   return findNodeBySegments(root, segments);
 }
 
+const ROOT_ALIASES = new Set(["game", "datamodel"]);
+
 function findNodeBySegments(node: InstanceNode, segments: string[]): InstanceNode | null {
   let startIndex = 0;
-  if (segments[0] !== undefined && (node.name === segments[0] || node.className === segments[0])) {
+  if (
+    segments[0] !== undefined &&
+    (node.name === segments[0] ||
+      node.className === segments[0] ||
+      ROOT_ALIASES.has(segments[0].toLowerCase()))
+  ) {
     startIndex = 1;
   }
   let current: InstanceNode = node;

@@ -507,7 +507,12 @@ registerTool({
     const selectedChecks = input.checks ?? [...checkNames];
     const client = new StudioBridgeClient({ port: input.studio_port });
     await client.ping();
-    const root = await client.getDataModel();
+    const rawRoot = await client.getDataModel();
+    const excludedServices = new Set(["CoreGui", "CorePackages", "PluginGuiService", "PluginDebugService"]);
+    const root: typeof rawRoot = {
+      ...rawRoot,
+      children: rawRoot.children.filter((c) => !excludedServices.has(c.name) && !excludedServices.has(c.className)),
+    };
 
     const openCloudClient =
       input.api_key && input.universe_id ? new OpenCloudClient(input.api_key) : undefined;
@@ -530,7 +535,7 @@ registerTool({
     }
     if (selectedChecks.includes("remote_contract_security")) {
       const remoteResult = analyzeRemoteContracts(root, {
-        rootPath: "game",
+        rootPath: root.name,
         checkPayloadValidation: true,
         checkRateLimiting: true,
         checkTrustBoundary: true,
