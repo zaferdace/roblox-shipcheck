@@ -15,8 +15,6 @@
 → Outputs Markdown + JSON
 ```
 
-Smoke tests are included for basic structural verification, but shipcheck is the main product.
-
 ## Quick Start
 
 1. Install the Studio plugin from [Releases](https://github.com/zaferdace/roblox-shipcheck/releases) and enable it in Roblox Studio.
@@ -56,13 +54,16 @@ Each finding includes:
 - Confidence: `high`, `medium`, `heuristic`, or `manual_review`
 - Recommendation: what to inspect or fix next
 
-Smoke tests are available as secondary checks for a few common flows:
-- `spawn_flow`
-- `shop_flow`
-- `tutorial_flow`
-- `mobile_ux`
+### Smoke Tests (Experimental)
 
-These are structural smoke tests, not gameplay automation.
+Structural smoke tests are available for a few common flows. These verify that expected setup exists, not that gameplay works at runtime.
+
+- `spawn_flow` — Player spawn setup, starter scripts, spawn locations
+- `shop_flow` — MarketplaceService usage, ProcessReceipt, shop UI presence
+- `tutorial_flow` — Tutorial scripts, state persistence setup
+- `mobile_ux` — Touch targets, input compatibility, GUI sizing
+
+Smoke tests are experimental and best-effort. They are not a substitute for human QA.
 
 ## Sample Report
 
@@ -101,15 +102,29 @@ Script contains "discord.gg" reference.
 
 See [examples/](examples/) for full sample reports in Markdown and JSON.
 
+## What Shipcheck Does Not Do
+
+- It does not play your game or simulate users.
+- It does not certify compliance or guarantee publish safety.
+- It does not replace human QA or platform review processes.
+- It does not access runtime state, network traffic, or live player data.
+- It is a pre-release review assistant, not a release gate.
+
 ## Limitations
 
-Read this section literally. This tool is useful, but narrow.
-
-- It does not play your game. It inspects project structure and script source.
 - Content maturity checks are heuristic only. They flag review candidates, not policy violations.
-- Smoke tests verify expected setup exists. They do not prove a player flow works.
-- The verdict is a scoring rule, not a guarantee that a release is safe to ship.
-- It can miss issues and it can raise false positives. A passing report means "nothing obvious was flagged by these checks," not "safe to publish."
+- Smoke tests verify expected setup exists. They do not prove a player flow works at runtime.
+- The verdict is a scoring rule based on issue counts, not a comprehensive release policy.
+- It can miss issues and it can raise false positives. A passing report means "nothing obvious was flagged," not "safe to publish."
+- Some checks depend on Open Cloud API keys for full coverage. Without them, metadata-based checks are skipped.
+
+## Tested Properties
+
+Shipcheck has been tested against real Roblox Studio projects with the following results:
+
+- Deterministic output: same verdict, score, and issues across repeated runs on the same project.
+- False positive fixes: root path resolution and internal service filtering have been corrected.
+- Edge cases handled gracefully: wrong port, invalid check names, invalid presets, missing results, zero-issue reports, and partial check selection all return clear errors or valid empty output.
 
 ## Architecture
 
@@ -117,7 +132,7 @@ Read this section literally. This tool is useful, but narrow.
 MCP Client <-stdio-> MCP Server <-http-> Bridge Server <-long-poll-> Studio Plugin
 ```
 
-The server runs locally. The plugin connects over localhost. The plugin inspects the current Studio state and returns findings through the MCP server.
+The server runs locally. The plugin connects over localhost (`127.0.0.1:33796`). The plugin inspects the current Studio state and returns findings through the MCP server. All mutations use `ChangeHistoryService` for undo support.
 
 ## Development
 
@@ -138,7 +153,7 @@ Useful scripts:
 - More report examples and sample fixtures
 - Better baseline and diff support
 - CI-friendly report export
-- More targeted smoke test presets
+- Improved smoke test presets with clearer pass/fail semantics
 
 ## Contributing
 
