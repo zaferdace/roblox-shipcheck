@@ -1,12 +1,12 @@
 {
-  "name": "roblox-workflow-mcp",
+  "name": "roblox-shipcheck",
   "version": "0.1.0",
-  "description": "Release and safety automation for Roblox Studio — audits, release gates, baseline diffs, and safe automation through MCP.",
+  "description": "AI-assisted release readiness and guided playtesting for Roblox experiences. Catch publish blockers, maturity gaps, and gameplay flow issues before release.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "roblox-workflow-mcp": "dist/index.js"
+    "roblox-shipcheck": "dist/index.js"
   },
   "exports": {
     ".": {
@@ -31,25 +31,29 @@
   "keywords": [
     "roblox",
     "roblox-studio",
+    "shipcheck",
+    "release-readiness",
+    "playtesting",
     "mcp",
     "model-context-protocol",
     "ai-agents",
-    "automation",
     "game-development",
+    "developer-tools",
     "testing",
-    "mobile-qa",
-    "audit",
+    "compliance",
+    "content-maturity",
+    "automation",
     "open-cloud",
-    "workflow"
+    "typescript"
   ],
   "author": "zaferdace",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zaferdace/roblox-workflow-mcp.git"
+    "url": "git+https://github.com/zaferdace/roblox-shipcheck.git"
   },
-  "bugs": { "url": "https://github.com/zaferdace/roblox-workflow-mcp/issues" },
-  "homepage": "https://github.com/zaferdace/roblox-workflow-mcp#readme",
+  "bugs": { "url": "https://github.com/zaferdace/roblox-shipcheck/issues" },
+  "homepage": "https://github.com/zaferdace/roblox-shipcheck#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "zod": "^3.25.0",

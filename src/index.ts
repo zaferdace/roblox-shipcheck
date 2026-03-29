@@ -8,7 +8,7 @@ import "./tools/register-all.js";
 import { executeTool, getToolDefinitions } from "./tools/registry.js";
 
 const server = new Server(
-  { name: "roblox-workflow-mcp", version: SERVER_VERSION },
+  { name: "roblox-shipcheck", version: SERVER_VERSION },
   { capabilities: { tools: {} } },
 );
 

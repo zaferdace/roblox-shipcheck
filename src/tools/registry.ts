@@ -13,7 +13,7 @@ const registry = new Map<string, ToolRegistration<z.ZodType>>();
 
 export function registerTool<T extends z.ZodType>(reg: ToolRegistration<T>): void {
   if (registry.has(reg.name)) {
-    console.error(`[roblox-workflow-mcp] Duplicate tool registration: ${reg.name}`);
+    console.error(`[roblox-shipcheck] Duplicate tool registration: ${reg.name}`);
   }
   registry.set(reg.name, reg as unknown as ToolRegistration<z.ZodType>);
 }
