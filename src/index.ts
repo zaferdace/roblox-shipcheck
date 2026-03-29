@@ -37,12 +37,16 @@ async function main(): Promise<void> {
     }
     throw error;
   });
-  const transport = new StdioServerTransport();
-  try {
-    await server.connect(transport);
-  } finally {
+
+  const shutdown = () => {
     bridge.stop();
-  }
+    process.exit(0);
+  };
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 }
 
 main().catch((error) => {
