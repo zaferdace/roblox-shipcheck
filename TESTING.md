@@ -77,6 +77,18 @@ All 43 tools tested against a live Roblox Studio session on 2026-03-29.
 |------|--------|-------|
 | `rbx_playtester` | PASS | list_scenarios, run_scenario (spawn_flow PASS), get_result all working |
 
+## Shooter Genre (3 tools + 2 presets)
+
+Tested against a non-shooter Roblox project (expected: clean output, no false positives).
+
+| Tool | Result | Notes |
+|------|--------|-------|
+| `rbx_shooter_weapon_remote_trust` | PASS | 0 weapon remotes found (correct for non-shooter) |
+| `rbx_shooter_spawn_clustering` | PASS | 0 spawns found (correct) |
+| `rbx_shooter_combat_content_maturity` | PASS | 30 scripts + 37 UI elements scanned, 0 findings |
+| `shooter_weapon_equip` preset | PARTIAL | No weapons in StarterPack (expected for non-shooter) |
+| `shooter_respawn_cycle` preset | PASS | CharacterAutoLoads=true, RespawnTime=3, 7 CharacterAdded handlers |
+
 ## Known Limitations
 
 - **`start_playtest`**: Plugin cannot invoke playtest in all Studio configurations due to `StartDecal` capability error. Use manual Play button as a workaround.
