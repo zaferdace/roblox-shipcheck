@@ -137,13 +137,24 @@ See [examples/](examples/) for full sample reports in Markdown and JSON.
 - It can miss issues and it can raise false positives. A passing report means "nothing obvious was flagged," not "safe to publish."
 - Some checks depend on Open Cloud API keys for full coverage. Without them, metadata-based checks are skipped.
 
-## Tested Properties
+## Studio-Tested
 
-Shipcheck has been tested against real Roblox Studio projects with the following results:
+All 43 tools have been integration-tested against a live Roblox Studio session (2026-03-29).
 
-- Deterministic output: same verdict, score, and issues across repeated runs on the same project.
-- False positive fixes: root path resolution and internal service filtering have been corrected.
-- Edge cases handled gracefully: wrong port, invalid check names, invalid presets, missing results, zero-issue reports, and partial check selection all return clear errors or valid empty output.
+| Category | Tools | Pass | Skip | Partial |
+|----------|-------|------|------|---------|
+| Core | 18 | 17 | 0 | 1 |
+| Shipcheck | 14 | 14 | 0 | 0 |
+| Automation | 4 | 3 | 1 | 0 |
+| Building | 3 | 3 | 0 | 0 |
+| Cloud | 3 | 0 | 3 | 0 |
+| Playtester | 1 | 1 | 0 | 0 |
+| **Total** | **43** | **38** | **4** | **1** |
+
+- **Skip:** Cloud tools require an Open Cloud API key (schema validated, not callable without credentials).
+- **Partial:** `start_playtest` returns a plugin capability error (`StartDecal`). Playtest control may require manual interaction in some Studio configurations.
+
+See [TESTING.md](TESTING.md) for the full test matrix with per-tool results and known limitations.
 
 ## Architecture
 
