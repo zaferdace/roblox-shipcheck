@@ -112,7 +112,8 @@ export async function runWeaponRemoteTrust(
         remote_path: remote.path,
         rule: "no_server_handler",
         message: `No ${input.server_script_root} handler referencing ${remoteName} was found.`,
-        suggestion: "Add a server-side remote handler and validate weapon actions before applying them.",
+        suggestion:
+          "Add a server-side remote handler and validate weapon actions before applying them.",
       });
       continue;
     }
@@ -137,7 +138,8 @@ export async function runWeaponRemoteTrust(
         remote_path: remote.path,
         rule: "missing_type_validation",
         message: `Handler scripts for ${remoteName} do not show clear argument type validation.`,
-        suggestion: "Validate remote payload types with typeof, type, tonumber, or assert before use.",
+        suggestion:
+          "Validate remote payload types with typeof, type, tonumber, or assert before use.",
         ...(firstScriptPath ? { script_path: firstScriptPath } : {}),
       });
     }

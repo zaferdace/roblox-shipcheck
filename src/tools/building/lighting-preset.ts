@@ -166,8 +166,9 @@ const lightingResultSchema = z.object({
 
 function filterTechnology(config: PresetConfig): PresetConfig {
   if (config["lighting"]) {
-    const { Technology: _, ...safe } = config["lighting"];
-    return { ...config, lighting: safe };
+    const filtered = { ...config["lighting"] };
+    delete filtered["Technology"];
+    return { ...config, lighting: filtered };
   }
   return config;
 }
@@ -180,17 +181,13 @@ registerTool({
     const client = new StudioBridgeClient({ port: input.studio_port });
 
     let config: PresetConfig;
-    let presetName: string;
 
     if (input.preset && input.preset !== "custom" && PRESETS[input.preset]) {
       config = filterTechnology({ ...PRESETS[input.preset] });
-      presetName = input.preset;
     } else if (input.custom_config) {
       config = filterTechnology({ ...input.custom_config } as PresetConfig);
-      presetName = input.preset ?? "custom";
     } else {
       config = {};
-      presetName = input.preset ?? "custom";
     }
 
     const result = await client.applyLighting(undefined, config);

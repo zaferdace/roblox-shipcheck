@@ -42,10 +42,7 @@ interface CombatContentMaturityResult {
   score: number;
   scripts_scanned: number;
   ui_elements_scanned: number;
-  findings_by_category: Record<
-    CategoryKey,
-    number
-  >;
+  findings_by_category: Record<CategoryKey, number>;
   issues: CombatContentMaturityIssue[];
 }
 
@@ -66,9 +63,7 @@ const defaultCategories: Record<CategoryKey, string[]> = {
   social_risk: ["discord.gg", "discord.com/invite", "youtube.com", "twitter.com", "tiktok.com"],
 };
 
-function buildCategories(
-  customKeywords?: CustomKeywords,
-): Record<CategoryKey, string[]> {
+function buildCategories(customKeywords?: CustomKeywords): Record<CategoryKey, string[]> {
   return Object.fromEntries(
     categoryKeys.map((category) => [
       category,
