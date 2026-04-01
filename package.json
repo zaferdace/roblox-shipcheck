@@ -14,8 +14,12 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist"],
-  "engines": { "node": ">=18.0.0" },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -25,6 +29,8 @@
     "format:check": "prettier --check src/",
     "publint": "publint",
     "check": "tsc --noEmit && eslint src/ && prettier --check src/ && publint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prepare": "npm run build",
     "prepublishOnly": "npm run build"
   },
@@ -52,7 +58,9 @@
     "type": "git",
     "url": "git+https://github.com/zaferdace/roblox-shipcheck.git"
   },
-  "bugs": { "url": "https://github.com/zaferdace/roblox-shipcheck/issues" },
+  "bugs": {
+    "url": "https://github.com/zaferdace/roblox-shipcheck/issues"
+  },
   "homepage": "https://github.com/zaferdace/roblox-shipcheck#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -66,6 +74,7 @@
     "prettier": "^3.8.1",
     "publint": "^0.3.18",
     "typescript": "^5.7.0",
-    "typescript-eslint": "^8.57.2"
+    "typescript-eslint": "^8.57.2",
+    "vitest": "^4.1.2"
   }
 }
