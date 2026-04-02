@@ -1,3 +1,9 @@
 import "./weapon-remote-trust.js";
 import "./spawn-clustering.js";
 import "./combat-content-maturity.js";
+import "./weapon-config-sanity.js";
+import "./hitbox-audit.js";
+import "./scope-ui-check.js";
+import "./mobile-hud.js";
+import "./team-infrastructure.js";
+import "./anticheat-surface.js";
