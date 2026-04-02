@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import type { InstanceNode } from "../types/roblox.js";
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
@@ -21,36 +20,7 @@ vi.mock("../roblox/studio-bridge-client.js", () => ({
 
 import { executeTool } from "../tools/registry.js";
 await import("../tools/core/search-project.js");
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function makeNode(
-  name: string,
-  className: string,
-  children: InstanceNode[] = [],
-  properties?: Record<string, unknown>,
-): InstanceNode {
-  return {
-    id: `id-${name}`,
-    name,
-    className,
-    children,
-    ...(properties ? { properties } : {}),
-  };
-}
-
-function makeSampleTree(): InstanceNode {
-  const script = makeNode("GameManager", "Script", [], {
-    Source: "-- manages game state\nlocal Players = game:GetService('Players')",
-  });
-  const button = makeNode("PlayButton", "TextButton");
-  const workspace = makeNode("Workspace", "Workspace", [
-    makeNode("Map", "Model", [makeNode("BasePart", "Part")]),
-  ]);
-  const starterGui = makeNode("StarterGui", "StarterGui", [button]);
-  const serverStorage = makeNode("ServerStorage", "ServerStorage", [script]);
-  return makeNode("game", "DataModel", [workspace, starterGui, serverStorage]);
-}
+import { makeSampleTree } from "./test-helpers.js";
 
 // ── tests ─────────────────────────────────────────────────────────────────────
 
@@ -195,5 +165,25 @@ describe("rbx_search_project", () => {
     mockGetDataModel.mockResolvedValue(makeSampleTree());
     await executeTool("rbx_search_project", { query: "x", search_type: "name" });
     expect(mockPing).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects invalid studio_port values", async () => {
+    await expect(
+      executeTool("rbx_search_project", { query: "x", search_type: "name", studio_port: 0 }),
+    ).rejects.toThrow();
+    await expect(
+      executeTool("rbx_search_project", { query: "x", search_type: "name", studio_port: -1 }),
+    ).rejects.toThrow();
+  });
+
+  it("includes response envelope metadata with source.studio_port", async () => {
+    mockGetDataModel.mockResolvedValue(makeSampleTree());
+    const result = (await executeTool("rbx_search_project", {
+      query: "Workspace",
+      search_type: "name",
+      studio_port: 44000,
+    })) as Record<string, unknown>;
+    const source = result["source"] as Record<string, unknown>;
+    expect(source?.["studio_port"]).toBe(44000);
   });
 });

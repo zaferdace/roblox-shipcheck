@@ -1,29 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { InstanceNode } from "../types/roblox.js";
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-function makeNode(
-  name: string,
-  className: string,
-  children: InstanceNode[] = [],
-  properties?: Record<string, unknown>,
-): InstanceNode {
-  return {
-    id: `id-${name}`,
-    name,
-    className,
-    children,
-    ...(properties ? { properties } : {}),
-  };
-}
-
-function makeTree(extraChildren: InstanceNode[] = []): InstanceNode {
-  return makeNode("game", "DataModel", [
-    makeNode("Workspace", "Workspace", extraChildren),
-    makeNode("ServerStorage", "ServerStorage"),
-  ]);
-}
+import { makeNode, makeTree } from "./test-helpers.js";
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 

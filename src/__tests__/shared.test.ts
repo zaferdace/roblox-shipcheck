@@ -21,24 +21,8 @@ import {
   buildPatchOperationsPreview,
   type AuditIssue,
 } from "../shared.js";
-import type { InstanceNode, PatchOperation } from "../types/roblox.js";
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function makeNode(
-  name: string,
-  className: string,
-  children: InstanceNode[] = [],
-  properties?: Record<string, unknown>,
-): InstanceNode {
-  return {
-    id: `id-${name}`,
-    name,
-    className,
-    children,
-    ...(properties ? { properties } : {}),
-  };
-}
+import type { PatchOperation } from "../types/roblox.js";
+import { makeNode } from "./test-helpers.js";
 
 // ── scoreFromIssues ───────────────────────────────────────────────────────────
 
@@ -565,5 +549,59 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview[0]?.operation).toBe("reparent");
+  });
+
+  it("returns an entry with null before when deleting a missing node", () => {
+    const ops: PatchOperation[] = [
+      { type: "delete", target_path: "game.Workspace.MissingPart" },
+    ];
+    const preview = buildPatchOperationsPreview(ops, root);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]?.operation).toBe("delete");
+    expect(preview[0]?.before).toBeNull();
+    expect(preview[0]?.after).toBeNull();
+  });
+
+  it("returns an entry with null before when updating a missing node", () => {
+    const ops: PatchOperation[] = [
+      {
+        type: "update",
+        target_path: "game.Workspace.MissingPart",
+        properties: { Anchored: false },
+      },
+    ];
+    const preview = buildPatchOperationsPreview(ops, root);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]?.operation).toBe("update");
+    expect(preview[0]?.before).toBeNull();
+  });
+
+  it("returns an entry with null before when reparenting a missing node", () => {
+    const ops: PatchOperation[] = [
+      {
+        type: "reparent",
+        target_path: "game.Workspace.MissingPart",
+        new_parent_path: "game.ReplicatedStorage",
+      },
+    ];
+    const preview = buildPatchOperationsPreview(ops, root);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]?.operation).toBe("reparent");
+    expect(preview[0]?.before).toBeNull();
+  });
+
+  it("returns an entry with the new_parent_path even when parent does not exist", () => {
+    const ops: PatchOperation[] = [
+      {
+        type: "reparent",
+        target_path: "game.Workspace.Part",
+        new_parent_path: "game.Workspace.MissingFolder",
+      },
+    ];
+    const preview = buildPatchOperationsPreview(ops, root);
+    expect(preview).toHaveLength(1);
+    expect(preview[0]?.operation).toBe("reparent");
+    const after = preview[0]?.after as Record<string, unknown>;
+    expect(after?.["new_parent_path"]).toBe("game.Workspace.MissingFolder");
   });
 });

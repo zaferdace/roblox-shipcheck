@@ -3,11 +3,12 @@ import type { RobloxPropertyValue } from "../types/roblox.js";
 
 // ── mocks ─────────────────────────────────────────────────────────────────────
 
+const mockPing = vi.fn().mockResolvedValue({ ok: true });
 const mockGetProperties = vi.fn();
 
 vi.mock("../roblox/studio-bridge-client.js", () => ({
   StudioBridgeClient: class MockStudioBridgeClient {
-    ping = vi.fn().mockResolvedValue({ ok: true });
+    ping = mockPing;
     getProperties = mockGetProperties;
   },
   StudioBridgeError: class StudioBridgeError extends Error {
@@ -112,5 +113,23 @@ describe("rbx_get_instance_properties", () => {
       path: "game.Workspace.Part",
     })) as Record<string, unknown>;
     expect(result["data"]).toEqual(nestedProps);
+  });
+
+  it("rejects invalid studio_port values", async () => {
+    await expect(
+      executeTool("rbx_get_instance_properties", { path: "game.Workspace.Part", studio_port: 0 }),
+    ).rejects.toThrow();
+    await expect(
+      executeTool("rbx_get_instance_properties", { path: "game.Workspace.Part", studio_port: -1 }),
+    ).rejects.toThrow();
+  });
+
+  it("does not invoke ping before getProperties", async () => {
+    mockPing.mockClear();
+    mockGetProperties.mockResolvedValue({});
+    await executeTool("rbx_get_instance_properties", {
+      path: "game.Workspace.MyPart",
+    });
+    expect(mockPing).not.toHaveBeenCalled();
   });
 });
