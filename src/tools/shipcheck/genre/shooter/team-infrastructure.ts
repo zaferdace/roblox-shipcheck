@@ -113,7 +113,8 @@ export async function runTeamInfrastructure(
     issues.push({
       severity: "low",
       rule: "all_neutral",
-      message: "All SpawnLocations are neutral, so teams may not get dedicated spawn infrastructure.",
+      message:
+        "All SpawnLocations are neutral, so teams may not get dedicated spawn infrastructure.",
     });
   }
 

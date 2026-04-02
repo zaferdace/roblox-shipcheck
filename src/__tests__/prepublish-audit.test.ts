@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { InstanceNode } from "../types/roblox.js";
 
 // Mock the bridge client before importing the tool (which calls registerTool at module load).

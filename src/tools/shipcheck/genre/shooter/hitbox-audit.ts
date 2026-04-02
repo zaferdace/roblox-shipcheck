@@ -41,10 +41,12 @@ interface HitboxAuditResult {
 const scriptClasses = new Set(["Script", "LocalScript", "ModuleScript"]);
 const weaponPattern = /\b(weapon|gun|rifle|pistol|shotgun|sniper|bullet|projectile|shoot|fire)\b/iu;
 const raycastPattern = /\b(Raycast|raycast)\b/u;
-const hitDetectionPattern = /\b(Raycast|FindPartOnRay|TakeDamage|Humanoid|Touched|GetTouchingParts)\b/u;
+const hitDetectionPattern =
+  /\b(Raycast|FindPartOnRay|TakeDamage|Humanoid|Touched|GetTouchingParts)\b/u;
 
 function extractNumericLiteralsNearRaycast(source: string): number[] {
-  const matches = source.match(/(?:Raycast|FindPartOnRay)[\s\S]{0,160}?(\d{2,6}(?:\.\d+)?)/gu) ?? [];
+  const matches =
+    source.match(/(?:Raycast|FindPartOnRay)[\s\S]{0,160}?(\d{2,6}(?:\.\d+)?)/gu) ?? [];
   const values: number[] = [];
   for (const match of matches) {
     const numbers = match.match(/\d{2,6}(?:\.\d+)?/gu) ?? [];
@@ -89,7 +91,8 @@ export async function runHitboxAudit(
     const hasHitDetection = hitDetectionPattern.test(source);
     const numericLiterals = extractNumericLiteralsNearRaycast(source);
     const maxDistance = numericLiterals.length > 0 ? Math.max(...numericLiterals) : null;
-    const clientOnly = scriptNode.className === "LocalScript" && (usesRaycast || usesDeprecatedFindPartOnRay);
+    const clientOnly =
+      scriptNode.className === "LocalScript" && (usesRaycast || usesDeprecatedFindPartOnRay);
     const looksLikeWeaponScript = weaponPattern.test(source) || weaponPattern.test(scriptNode.path);
 
     raycastPatterns.push({

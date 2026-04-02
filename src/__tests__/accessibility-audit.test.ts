@@ -15,9 +15,7 @@ function makeNode(
 // Factory to produce a tree with a single element as a child of a ScreenGui.
 function treeWithGui(child: InstanceNode): InstanceNode {
   const screenGui = makeNode("HUD", "ScreenGui", [child]);
-  return makeNode("game", "DataModel", [
-    makeNode("StarterGui", "StarterGui", [screenGui]),
-  ]);
+  return makeNode("game", "DataModel", [makeNode("StarterGui", "StarterGui", [screenGui])]);
 }
 
 // The accessibility-audit handler calls `client.getDataModel()` once and

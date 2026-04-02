@@ -81,11 +81,7 @@ describe("rbx_release_diff", () => {
         save_baseline: true,
         output_path: "/tmp/baseline.json",
       });
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        "/tmp/baseline.json",
-        expect.any(String),
-        "utf8",
-      );
+      expect(mockWriteFile).toHaveBeenCalledWith("/tmp/baseline.json", expect.any(String), "utf8");
     });
 
     it("includes path in returned data when output_path provided", async () => {
@@ -153,9 +149,7 @@ describe("rbx_release_diff", () => {
       const currentTree = makeTree([
         makeNode("GameManager", "Script", [], { Source: "-- v2 with changes" }),
       ]);
-      const baseTree = makeTree([
-        makeNode("GameManager", "Script", [], { Source: "-- v1" }),
-      ]);
+      const baseTree = makeTree([makeNode("GameManager", "Script", [], { Source: "-- v1" })]);
       mockGetDataModel.mockResolvedValue(currentTree);
       mockReadFile.mockResolvedValue(JSON.stringify(makeBaseline(baseTree, baseScripts)));
 
@@ -226,11 +220,7 @@ describe("rbx_release_diff", () => {
         baseline_path: "/tmp/baseline.json",
         output_path: "/tmp/report.json",
       });
-      expect(mockWriteFile).toHaveBeenCalledWith(
-        "/tmp/report.json",
-        expect.any(String),
-        "utf8",
-      );
+      expect(mockWriteFile).toHaveBeenCalledWith("/tmp/report.json", expect.any(String), "utf8");
     });
   });
 
@@ -239,9 +229,7 @@ describe("rbx_release_diff", () => {
   describe("parameter validation", () => {
     it("throws when baseline_path is omitted in diff mode", async () => {
       mockGetDataModel.mockResolvedValue(makeTree());
-      await expect(
-        executeTool("rbx_release_diff", { save_baseline: false }),
-      ).rejects.toThrow();
+      await expect(executeTool("rbx_release_diff", { save_baseline: false })).rejects.toThrow();
     });
 
     it("validates studio_port as positive integer", async () => {

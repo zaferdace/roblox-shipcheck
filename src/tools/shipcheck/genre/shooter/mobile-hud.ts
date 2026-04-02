@@ -42,7 +42,14 @@ interface MobileHudResult {
 }
 
 const starterGuiRoot = "game.StarterGui";
-const hudClasses = new Set(["ScreenGui", "Frame", "TextLabel", "TextButton", "ImageLabel", "ImageButton"]);
+const hudClasses = new Set([
+  "ScreenGui",
+  "Frame",
+  "TextLabel",
+  "TextButton",
+  "ImageLabel",
+  "ImageButton",
+]);
 const scriptClasses = new Set(["Script", "LocalScript", "ModuleScript"]);
 
 function renderString(value: RobloxPropertyValue | undefined): string {

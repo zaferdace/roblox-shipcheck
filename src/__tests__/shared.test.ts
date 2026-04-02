@@ -519,9 +519,7 @@ describe("buildPatchOperationsPreview", () => {
   });
 
   it("previews a delete operation", () => {
-    const ops: PatchOperation[] = [
-      { type: "delete", target_path: "game.Workspace.Part" },
-    ];
+    const ops: PatchOperation[] = [{ type: "delete", target_path: "game.Workspace.Part" }];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview[0]?.["operation"]).toBe("delete");
     expect(preview[0]?.["after"]).toBeNull();
@@ -552,9 +550,7 @@ describe("buildPatchOperationsPreview", () => {
   });
 
   it("returns an entry with null before when deleting a missing node", () => {
-    const ops: PatchOperation[] = [
-      { type: "delete", target_path: "game.Workspace.MissingPart" },
-    ];
+    const ops: PatchOperation[] = [{ type: "delete", target_path: "game.Workspace.MissingPart" }];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
     expect(preview[0]?.["operation"]).toBe("delete");

@@ -84,15 +84,11 @@ describe("rbx_get_instance_properties", () => {
   });
 
   it("rejects empty path string", async () => {
-    await expect(
-      executeTool("rbx_get_instance_properties", { path: "" }),
-    ).rejects.toThrow();
+    await expect(executeTool("rbx_get_instance_properties", { path: "" })).rejects.toThrow();
   });
 
   it("rejects missing path parameter", async () => {
-    await expect(
-      executeTool("rbx_get_instance_properties", {}),
-    ).rejects.toThrow();
+    await expect(executeTool("rbx_get_instance_properties", {})).rejects.toThrow();
   });
 
   it("propagates bridge errors to the caller", async () => {

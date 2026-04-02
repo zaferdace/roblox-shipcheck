@@ -37,7 +37,8 @@ interface AnticheatSurfaceResult {
 }
 
 const scriptClasses = new Set(["Script", "ModuleScript"]);
-const securityRemotePattern = /\b(anticheat|anti_cheat|security|validate|verification|sanity|guard|check)\b/iu;
+const securityRemotePattern =
+  /\b(anticheat|anti_cheat|security|validate|verification|sanity|guard|check)\b/iu;
 
 function isDescendantOf(path: string, parentPath: string): boolean {
   return path === parentPath || path.startsWith(`${parentPath}.`);
@@ -94,10 +95,16 @@ export async function runAnticheatSurface(
     if (/\b(WalkSpeed|AssemblyLinearVelocity|Velocity|Magnitude)\b/u.test(source)) {
       checks.speed_validation = true;
     }
-    if (/\bRaycast\b/u.test(source) && /\b(OnServerEvent|OnServerInvoke|ServerScriptService)\b/u.test(source)) {
+    if (
+      /\bRaycast\b/u.test(source) &&
+      /\b(OnServerEvent|OnServerInvoke|ServerScriptService)\b/u.test(source)
+    ) {
       checks.server_raycast_validation = true;
     }
-    if (/\b(position|Position|CFrame)\b/u.test(source) && /\b(delta|magnitude|distance|teleport)\b/iu.test(source)) {
+    if (
+      /\b(position|Position|CFrame)\b/u.test(source) &&
+      /\b(delta|magnitude|distance|teleport)\b/iu.test(source)
+    ) {
       checks.teleport_detection = true;
     }
     if (
