@@ -513,9 +513,9 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
-    expect(preview[0]?.operation).toBe("create");
-    expect(preview[0]?.before).toBeNull();
-    expect((preview[0]?.after as Record<string, unknown>)?.className).toBe("Part");
+    expect(preview[0]?.["operation"]).toBe("create");
+    expect(preview[0]?.["before"]).toBeNull();
+    expect((preview[0]?.["after"] as Record<string, unknown>)?.["className"]).toBe("Part");
   });
 
   it("previews a delete operation", () => {
@@ -523,8 +523,8 @@ describe("buildPatchOperationsPreview", () => {
       { type: "delete", target_path: "game.Workspace.Part" },
     ];
     const preview = buildPatchOperationsPreview(ops, root);
-    expect(preview[0]?.operation).toBe("delete");
-    expect(preview[0]?.after).toBeNull();
+    expect(preview[0]?.["operation"]).toBe("delete");
+    expect(preview[0]?.["after"]).toBeNull();
   });
 
   it("previews an update operation", () => {
@@ -536,7 +536,7 @@ describe("buildPatchOperationsPreview", () => {
       },
     ];
     const preview = buildPatchOperationsPreview(ops, root);
-    expect(preview[0]?.operation).toBe("update");
+    expect(preview[0]?.["operation"]).toBe("update");
   });
 
   it("previews a reparent operation", () => {
@@ -548,7 +548,7 @@ describe("buildPatchOperationsPreview", () => {
       },
     ];
     const preview = buildPatchOperationsPreview(ops, root);
-    expect(preview[0]?.operation).toBe("reparent");
+    expect(preview[0]?.["operation"]).toBe("reparent");
   });
 
   it("returns an entry with null before when deleting a missing node", () => {
@@ -557,9 +557,9 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
-    expect(preview[0]?.operation).toBe("delete");
-    expect(preview[0]?.before).toBeNull();
-    expect(preview[0]?.after).toBeNull();
+    expect(preview[0]?.["operation"]).toBe("delete");
+    expect(preview[0]?.["before"]).toBeNull();
+    expect(preview[0]?.["after"]).toBeNull();
   });
 
   it("returns an entry with null before when updating a missing node", () => {
@@ -572,8 +572,8 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
-    expect(preview[0]?.operation).toBe("update");
-    expect(preview[0]?.before).toBeNull();
+    expect(preview[0]?.["operation"]).toBe("update");
+    expect(preview[0]?.["before"]).toBeNull();
   });
 
   it("returns an entry with null before when reparenting a missing node", () => {
@@ -586,8 +586,8 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
-    expect(preview[0]?.operation).toBe("reparent");
-    expect(preview[0]?.before).toBeNull();
+    expect(preview[0]?.["operation"]).toBe("reparent");
+    expect(preview[0]?.["before"]).toBeNull();
   });
 
   it("returns an entry with the new_parent_path even when parent does not exist", () => {
@@ -600,8 +600,8 @@ describe("buildPatchOperationsPreview", () => {
     ];
     const preview = buildPatchOperationsPreview(ops, root);
     expect(preview).toHaveLength(1);
-    expect(preview[0]?.operation).toBe("reparent");
-    const after = preview[0]?.after as Record<string, unknown>;
+    expect(preview[0]?.["operation"]).toBe("reparent");
+    const after = preview[0]?.["after"] as Record<string, unknown>;
     expect(after?.["new_parent_path"]).toBe("game.Workspace.MissingFolder");
   });
 });

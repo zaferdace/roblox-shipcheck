@@ -1,17 +1,17 @@
-import type { InstanceNode } from "../types/roblox.js";
+import type { InstanceNode, RobloxPropertyValue } from "../types/roblox.js";
 
 export function makeNode(
   name: string,
   className: string,
   children: InstanceNode[] = [],
-  properties?: Record<string, unknown>,
+  properties?: Record<string, RobloxPropertyValue>,
 ): InstanceNode {
   return {
     id: `id-${name}`,
     name,
     className,
     children,
-    ...(properties ? { properties } : {}),
+    ...(properties !== undefined ? { properties } : {}),
   };
 }
 
