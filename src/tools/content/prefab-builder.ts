@@ -340,7 +340,7 @@ registerTool({
     const pos = input.position ?? { x: 0, y: 5, z: 0 };
 
     const lua = buildPrefabLua(input.prefab_type, name, input.parent_path, pos);
-    const result = await client.executeCode(lua);
+    const result = await client.executeCode(lua, true);
 
     const componentMap: Record<PrefabType, string[]> = {
       chest: ["Part (ChestBody)", "ClickDetector", "Script (ChestScript)"],
