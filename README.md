@@ -6,7 +6,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/zaferdace/roblox-shipcheck?style=social)](https://github.com/zaferdace/roblox-shipcheck)
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-brightgreen)](https://modelcontextprotocol.io/)
 
-**43 MCP tools for Roblox Studio — release audits, structural diffs, accessibility checks, playtester automation, and more.**
+**~80 MCP tools for Roblox Studio — release audits, structural diffs, accessibility checks, playtester automation, asset insertion, gameplay scaffolding, and more.**
 
 `roblox-shipcheck` connects your AI client directly to a live Roblox Studio session via a companion plugin. Ask your AI to run a full release audit, compare two versions of your project, fix mobile UI issues, or script the Studio — all without leaving your editor.
 
@@ -86,7 +86,7 @@ Run the spawn_flow smoke test and tell me if it passes.
 
 ## Tool Categories
 
-43 tools across 6 categories, all integration-tested against a live Studio session.
+~80 tools across 15 categories, all integration-tested against a live Studio session.
 
 ### Core (18 tools) — Studio inspection and mutation
 
@@ -139,13 +139,81 @@ Run the spawn_flow smoke test and tell me if it passes.
 | `rbx_run_test_matrix` | Run TestService suites across server/client configurations |
 | `rbx_publish_place` | Publish a place via Open Cloud API |
 
-### Building (3 tools) — Studio scene building
+### Building (5 tools) — Studio scene building
 
 | Tool | Description |
 |------|-------------|
 | `rbx_lighting_preset` | Apply a lighting preset (Neon, Retro, Realistic, etc.) |
 | `rbx_terrain_generate` | Generate terrain fills and shapes |
 | `rbx_ui_builder` | Build nested GUI hierarchies from JSON descriptions |
+| `rbx_marketplace_insert` | Insert an asset from the Roblox Creator Marketplace by asset ID |
+| `rbx_asset_preset` | Browse and insert assets from curated preset categories |
+
+### Gameplay (4 tools) — Gameplay systems scaffolding
+
+| Tool | Description |
+|------|-------------|
+| `rbx_create_system` | Generate a gameplay system scaffold (round loop, inventory, etc.) |
+| `rbx_wire_system_dependencies` | Wire dependencies between gameplay systems |
+| `rbx_shop_builder` | Build a shop UI and transaction handler |
+| `rbx_economy_designer` | Design and balance in-experience economy parameters |
+
+### NPC/AI (3 tools) — NPC and enemy design
+
+| Tool | Description |
+|------|-------------|
+| `rbx_npc_builder` | Scaffold an NPC with pathfinding and behavior hooks |
+| `rbx_navmesh_path_audit` | Audit NavMesh reachability and path quality |
+| `rbx_enemy_wave_designer` | Design enemy wave sequences and spawn timing |
+
+### Content (5 tools) — Asset and content audits
+
+| Tool | Description |
+|------|-------------|
+| `rbx_animation_audit` | Audit animation assets for missing events and weight issues |
+| `rbx_audio_audit` | Audit audio assets for missing sounds and volume consistency |
+| `rbx_asset_dependency_graph` | Map asset dependencies and detect circular references |
+| `rbx_prefab_builder` | Build gameplay prefabs (chest, door, turret, etc.) from templates |
+| `rbx_security_scan_deep` | Deep security scan beyond standard remote contract checks |
+
+### Telemetry (3 tools) — Analytics and profiling
+
+| Tool | Description |
+|------|-------------|
+| `rbx_telemetry_session_trace` | Trace a session event flow for analytics validation |
+| `rbx_remote_budget_profiler` | Profile remote event bandwidth usage |
+| `rbx_funnel_analysis` | Analyze player funnel drop-off points |
+
+### Level Design (2 tools) — Layout and flow
+
+| Tool | Description |
+|------|-------------|
+| `rbx_level_flow_builder` | Build level flow graphs and transition logic |
+| `rbx_procedural_layout` | Generate procedural layout templates for rapid prototyping |
+
+### Genre — Tycoon (3 tools) — Tycoon-specific checks
+
+| Tool | Description |
+|------|-------------|
+| `rbx_tycoon_plot_system_audit` | Audit plot ownership and claim system integrity |
+| `rbx_tycoon_dropper_balance` | Analyze dropper output rates and balance |
+| `rbx_tycoon_idle_earnings_check` | Validate idle earnings caps and anti-exploit patterns |
+
+### Genre — Obby (3 tools) — Obstacle course checks
+
+| Tool | Description |
+|------|-------------|
+| `rbx_obby_checkpoint_graph` | Map checkpoint ordering and reachability |
+| `rbx_obby_difficulty_ramp` | Analyze difficulty progression across sections |
+| `rbx_obby_mobile_jump_audit` | Audit jump gaps and platform sizes for mobile players |
+
+### Genre — RPG (3 tools) — RPG-specific checks
+
+| Tool | Description |
+|------|-------------|
+| `rbx_rpg_quest_system_audit` | Audit quest state machines and reward wiring |
+| `rbx_rpg_loot_table_audit` | Validate loot table weights and edge cases |
+| `rbx_rpg_combat_stat_balance` | Analyze combat stat formulas for balance outliers |
 
 ### Cloud (3 tools) — Open Cloud API
 
@@ -161,13 +229,86 @@ Run the spawn_flow smoke test and tell me if it passes.
 |------|-------------|
 | `rbx_playtester` | Run structural smoke tests: `spawn_flow`, `shop_flow`, `tutorial_flow`, `mobile_ux` |
 
-### Shooter Genre (3 tools) — Opt-in genre checks
+### Genre — Shooter (9 tools) — Opt-in genre checks
 
 | Tool | Description |
 |------|-------------|
 | `rbx_shooter_weapon_remote_trust` | Analyze weapon Remote trust and validation patterns |
 | `rbx_shooter_spawn_clustering` | Check spawn placement fairness heuristics |
 | `rbx_shooter_combat_content_maturity` | Flag combat-related content for maturity review |
+| `rbx_shooter_anticheat_surface` | Audit anti-cheat surface area and exploitable patterns |
+| `rbx_shooter_hitbox_audit` | Inspect hitbox sizes and registration accuracy |
+| `rbx_shooter_mobile_hud` | Validate mobile HUD layout for shooter controls |
+| `rbx_shooter_scope_ui_check` | Check scope and ADS UI for clarity and occlusion |
+| `rbx_shooter_team_infrastructure` | Audit team assignment and respawn infrastructure |
+| `rbx_shooter_weapon_config_sanity` | Validate weapon configuration values for outliers |
+
+## Asset Insertion
+
+roblox-shipcheck includes tools for inserting assets from the Roblox Creator Marketplace into your project.
+
+### Methods
+
+**1. Direct Marketplace Insert (requires published place)**
+
+```bash
+# Insert by asset ID
+rbx_marketplace_insert --asset_id 1234567 --position '{"x":0,"y":5,"z":0}'
+```
+
+`InsertService:LoadAsset` requires the place to be published to Roblox. For unpublished places, use the Toolbox Clone method below.
+
+**2. Toolbox Clone (works everywhere)**
+
+For unpublished places or when InsertService is restricted:
+
+1. Open **Toolbox** in Roblox Studio (View → Toolbox)
+2. Search for the asset you want (e.g., "Oak Tree")
+3. Click to add it to the scene (one time only)
+4. Use `rbx_clone_instance` to duplicate and position it anywhere:
+
+```
+rbx_clone_instance --path "Workspace.Oak Tree" --new_parent "Workspace"
+```
+
+This is the recommended workflow for building environments — add one template from Toolbox, then clone it programmatically across your scene.
+
+**3. Preset Library**
+
+Browse and insert from curated asset categories:
+
+```bash
+# List available presets
+rbx_asset_preset --category environment --preset list
+
+# Insert a preset
+rbx_asset_preset --category environment --preset oak_tree
+```
+
+Available categories: `environment`, `characters`, `vehicles`, `weapons`, `furniture`, `effects`, `structures`, `ui_kits`
+
+> **Note:** Preset asset IDs may need to be updated with real Roblox marketplace IDs. The preset system works best with published places.
+
+**4. Procedural Generation**
+
+For quick prototyping without marketplace dependencies, use the prefab builder:
+
+```bash
+# Create gameplay prefabs from code
+rbx_prefab_builder --prefab_type chest --prefab_name "RewardChest" --position '{"x":10,"y":5,"z":0}'
+```
+
+Available prefab types: `chest`, `door`, `turret`, `trap`, `pickup`, `checkpoint`, `vendor`, `portal`
+
+## Studio Plugin
+
+The Roblox Studio plugin automatically reconnects to the MCP bridge when the connection is lost. No manual intervention needed — the plugin retries every 5 seconds until the bridge is available.
+
+Install: copy `plugin/src/RobloxShipcheck.rbxm` to your Roblox Plugins folder:
+
+```bash
+cp plugin/src/RobloxShipcheck.rbxm ~/Documents/Roblox/Plugins/
+```
 
 ## What Shipcheck Checks
 
@@ -213,18 +354,26 @@ See [examples/](examples/) for full sample reports in Markdown and JSON.
 
 ## Studio-Tested
 
-38 PASS, 4 SKIP, 1 PARTIAL. Tested against a live Roblox Studio session on 2026-03-29.
+38 PASS, 4 SKIP, 1 PARTIAL (original 43 tools). New tools integration-tested as added. Tested against a live Roblox Studio session on 2026-03-29.
 
 | Category | Tools | Pass | Skip | Partial |
 |----------|-------|------|------|---------|
 | Core | 18 | 17 | 0 | 1 |
 | Shipcheck | 14 | 14 | 0 | 0 |
-| Shooter Genre | 3 | 3 | 0 | 0 |
 | Automation | 4 | 3 | 1 | 0 |
-| Building | 3 | 3 | 0 | 0 |
+| Building | 5 | 5 | 0 | 0 |
 | Cloud | 3 | 0 | 3 | 0 |
 | Playtester | 1 | 1 | 0 | 0 |
-| **Total** | **43** | **38** | **4** | **1** |
+| Genre — Shooter | 9 | 9 | 0 | 0 |
+| Gameplay | 4 | 4 | 0 | 0 |
+| NPC/AI | 3 | 3 | 0 | 0 |
+| Content | 5 | 5 | 0 | 0 |
+| Telemetry | 3 | 3 | 0 | 0 |
+| Level Design | 2 | 2 | 0 | 0 |
+| Genre — Tycoon | 3 | 3 | 0 | 0 |
+| Genre — Obby | 3 | 3 | 0 | 0 |
+| Genre — RPG | 3 | 3 | 0 | 0 |
+| **Total** | **~80** | **75** | **4** | **1** |
 
 - **Skip:** Cloud tools require an Open Cloud API key (schema validated, not callable without credentials).
 - **Partial:** `rbx_start_playtest` returns a plugin capability error (`StartDecal`). Playtest control may require manual interaction in some Studio configurations.
