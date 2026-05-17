@@ -1,0 +1,26 @@
+{
+  "_purpose": "Cross-language HMAC-SHA256 parity fixture. Node `crypto.createHmac` and Lua `sha2.lua` must produce identical base64url output for these inputs. Any drift breaks plugin PROOF handshake silently in production.",
+  "cases": [
+    {
+      "label": "default-KAT (matches plugin self-test)",
+      "pairing_secret": "test_secret_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "nonce_server": "nonceServerExample",
+      "nonce_client": "nonceClientExample",
+      "expected_proof_base64url": "seQ0yfOosVjJqhEl7jEp70MuNPH3l6cNvmU51TdtnyE"
+    },
+    {
+      "label": "all-zeros-secret",
+      "pairing_secret": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "nonce_server": "AAAAAAAAAAAAAAAAAAAAAAAA",
+      "nonce_client": "AAAAAAAAAAAAAAAAAAAAAAAA",
+      "expected_proof_base64url": "mS8Kt0mllawIsHe9Ugr83md3PzU3vlYzCDMeOvgiV5Q"
+    },
+    {
+      "label": "real-shape (32-byte base64url)",
+      "pairing_secret": "wq6QM_PqLI1mzpEPHGc7Iuz0eS5IZJqEDDVKnK_5lzU",
+      "nonce_server": "5MGd45VQqXKkH3HuVfRVcg",
+      "nonce_client": "JcLEdEgQyR-OBA0bGUk9PA",
+      "expected_proof_base64url": "fleAPs6ltW7iQ4P7mcTlTOjs_fq64F6tcoaRiYM3-gU"
+    }
+  ]
+}

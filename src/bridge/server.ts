@@ -2,52 +2,12 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
+import { CommandQueue } from "./command-queue.js";
 import { RbxError, tryCatchHandler } from "./errors.js";
 import { SessionLifecycle } from "./lifecycle.js";
 import { PairingService } from "./pairing.js";
 import { setCurrentSessionToken } from "./session-registry.js";
 import { checkVersionCompat } from "./version-check.js";
-
-interface PendingCommand {
-  id: string;
-  command:
-    | "get_datamodel"
-    | "search"
-    | "get_properties"
-    | "apply_patch"
-    | "undo_patch"
-    | "run_tests"
-    | "get_test_results"
-    | "execute_code"
-    | "set_script_source"
-    | "get_script_source"
-    | "create_instance"
-    | "delete_instance"
-    | "clone_instance"
-    | "move_instance"
-    | "set_instance_property"
-    | "get_children"
-    | "get_selection"
-    | "manage_tags"
-    | "manage_attributes"
-    | "start_playtest"
-    | "stop_playtest"
-    | "get_output"
-    | "teleport_graph"
-    | "package_info"
-    | "get_screenshot"
-    | "build_ui"
-    | "apply_lighting"
-    | "terrain_generate";
-  params: unknown;
-  resolve: (result: unknown) => void;
-  reject: (error: Error) => void;
-  createdAt: number;
-}
-
-interface QueuedCommand extends PendingCommand {
-  timeout: NodeJS.Timeout;
-}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -220,8 +180,7 @@ export function startBridgeServer(
   const port = options.port ?? DEFAULT_PORT;
   const pairingService = options.pairingService;
   const lifecycle = new SessionLifecycle();
-  const queuedCommands: QueuedCommand[] = [];
-  const commandsById = new Map<string, QueuedCommand>();
+  const commandQueue = new CommandQueue({ timeoutMs: COMMAND_TIMEOUT_MS });
   const pollWaiters = new Set<{
     response: ServerResponse;
     request: IncomingMessage;
@@ -230,19 +189,7 @@ export function startBridgeServer(
   }>();
   let stopping = false;
 
-  const cleanupCommand = (commandId: string): QueuedCommand | undefined => {
-    const command = commandsById.get(commandId);
-    if (!command) {
-      return undefined;
-    }
-    clearTimeout(command.timeout);
-    commandsById.delete(commandId);
-    const queueIndex = queuedCommands.findIndex((entry) => entry.id === commandId);
-    if (queueIndex !== -1) {
-      queuedCommands.splice(queueIndex, 1);
-    }
-    return command;
-  };
+  commandQueue.onEnqueue(() => flushPollWaiters());
 
   const requirePluginSession = (): void => {
     if (lifecycle.state() !== "active") {
@@ -251,7 +198,7 @@ export function startBridgeServer(
   };
 
   const flushPollWaiters = (): void => {
-    if (queuedCommands.length === 0) {
+    if (commandQueue.size() === 0) {
       return;
     }
     for (const waiter of [...pollWaiters]) {
@@ -261,7 +208,7 @@ export function startBridgeServer(
         pollWaiters.delete(waiter);
         continue;
       }
-      const next = queuedCommands.shift();
+      const next = commandQueue.shift();
       if (!next) {
         break;
       }
@@ -276,34 +223,6 @@ export function startBridgeServer(
       });
     }
   };
-
-  const enqueueCommand = <T>(command: QueuedCommand["command"], params: unknown): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
-      const entry: QueuedCommand = {
-        id: randomUUID(),
-        command,
-        params,
-        resolve: (result) => resolve(result as T),
-        reject,
-        createdAt: Date.now(),
-        timeout: setTimeout(() => {
-          cleanupCommand(entry.id);
-          reject(
-            new RbxError(
-              "RBX.BRIDGE.COMMAND_TIMEOUT",
-              `Bridge command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`,
-              true,
-              { command, timeoutMs: COMMAND_TIMEOUT_MS },
-              "Retry the operation; long-running tools may need a higher timeout (Phase 2 work)",
-              504,
-            ),
-          );
-        }, COMMAND_TIMEOUT_MS),
-      };
-      queuedCommands.push(entry);
-      commandsById.set(entry.id, entry);
-      flushPollWaiters();
-    });
 
   // F8: 5-second heartbeat timer ticks the lifecycle and rejects in-flight commands on terminal expiry.
   // Snapshot the error BEFORE tick() transitions state to idle so commands get the correct error code.
@@ -332,10 +251,7 @@ export function startBridgeServer(
     lifecycle.tick();
     if (prevState !== "idle" && lifecycle.state() === "idle") {
       if (expiryError) {
-        for (const cmd of [...commandsById.values()]) {
-          cleanupCommand(cmd.id);
-          cmd.reject(expiryError);
-        }
+        commandQueue.rejectAll(expiryError);
       }
       setCurrentSessionToken(undefined);
     }
@@ -690,22 +606,19 @@ export function startBridgeServer(
         // F18: plugin reattached during grace — commands queued targeted the
         // pre-reload context. Reject them so caller retries against fresh state.
         if (heartbeatResult.reconnected) {
-          for (const cmd of [...commandsById.values()]) {
-            cleanupCommand(cmd.id);
-            cmd.reject(
-              new RbxError(
-                "RBX.PLUGIN.RECONNECTED",
-                "Plugin reconnected after grace; queued commands invalidated for state consistency",
-                true,
-                undefined,
-                "Retry the original tool call — fresh plugin context now active",
-                503,
-              ),
-            );
-          }
+          commandQueue.rejectAll(
+            new RbxError(
+              "RBX.PLUGIN.RECONNECTED",
+              "Plugin reconnected after grace; queued commands invalidated for state consistency",
+              true,
+              undefined,
+              "Retry the original tool call — fresh plugin context now active",
+              503,
+            ),
+          );
         }
         const boundToken = auth.token;
-        const next = queuedCommands.shift();
+        const next = commandQueue.shift();
         if (next) {
           sendJson(req, res, 200, {
             id: next.id,
@@ -744,10 +657,10 @@ export function startBridgeServer(
               }
               return;
             }
-            if (queuedCommands.length === 0) {
+            if (commandQueue.size() === 0) {
               return;
             }
-            const command = queuedCommands.shift();
+            const command = commandQueue.shift();
             if (!command) {
               return;
             }
@@ -812,7 +725,7 @@ export function startBridgeServer(
             400,
           );
         }
-        const command = cleanupCommand(commandId);
+        const command = commandQueue.cleanup(commandId);
         if (!command) {
           throw new RbxError(
             "RBX.VALIDATION.UNKNOWN_COMMAND",
@@ -879,7 +792,7 @@ export function startBridgeServer(
             url.searchParams.get("include_properties") ?? undefined,
           ),
         };
-        const result = await enqueueCommand("get_datamodel", params);
+        const result = await commandQueue.enqueue("get_datamodel", params);
         sendJson(req, res, 200, result);
         return;
       }
@@ -888,7 +801,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("search", body);
+        const result = await commandQueue.enqueue("search", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -897,7 +810,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         requirePluginSession();
         const viewport = url.searchParams.get("viewport") ?? "game";
-        const result = await enqueueCommand("get_screenshot", { viewport });
+        const result = await commandQueue.enqueue("get_screenshot", { viewport });
         sendJson(req, res, 200, result);
         return;
       }
@@ -906,7 +819,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("run_tests", body);
+        const result = await commandQueue.enqueue("run_tests", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -925,7 +838,7 @@ export function startBridgeServer(
             400,
           );
         }
-        const result = await enqueueCommand("get_test_results", { runId });
+        const result = await commandQueue.enqueue("get_test_results", { runId });
         sendJson(req, res, 200, result);
         return;
       }
@@ -934,7 +847,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("apply_patch", body);
+        const result = await commandQueue.enqueue("apply_patch", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -943,7 +856,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("undo_patch", body);
+        const result = await commandQueue.enqueue("undo_patch", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -952,7 +865,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("execute_code", body);
+        const result = await commandQueue.enqueue("execute_code", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -971,7 +884,7 @@ export function startBridgeServer(
             400,
           );
         }
-        const result = await enqueueCommand("get_script_source", { path });
+        const result = await commandQueue.enqueue("get_script_source", { path });
         sendJson(req, res, 200, result);
         return;
       }
@@ -980,7 +893,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("set_script_source", body);
+        const result = await commandQueue.enqueue("set_script_source", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1006,7 +919,7 @@ export function startBridgeServer(
             400,
           );
         }
-        const result = await enqueueCommand("get_properties", { id: instanceId });
+        const result = await commandQueue.enqueue("get_properties", { id: instanceId });
         sendJson(req, res, 200, result);
         return;
       }
@@ -1025,7 +938,7 @@ export function startBridgeServer(
             400,
           );
         }
-        const result = await enqueueCommand("get_properties", { path });
+        const result = await commandQueue.enqueue("get_properties", { path });
         sendJson(req, res, 200, result);
         return;
       }
@@ -1034,7 +947,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("create_instance", body);
+        const result = await commandQueue.enqueue("create_instance", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1043,7 +956,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("delete_instance", body);
+        const result = await commandQueue.enqueue("delete_instance", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1052,7 +965,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("clone_instance", body);
+        const result = await commandQueue.enqueue("clone_instance", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1061,7 +974,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("move_instance", body);
+        const result = await commandQueue.enqueue("move_instance", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1070,7 +983,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("set_instance_property", body);
+        const result = await commandQueue.enqueue("set_instance_property", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1080,7 +993,7 @@ export function startBridgeServer(
         requirePluginSession();
         const path = url.searchParams.get("path") ?? undefined;
         const depth = coerceInteger(url.searchParams.get("depth") ?? undefined);
-        const result = await enqueueCommand("get_children", {
+        const result = await commandQueue.enqueue("get_children", {
           ...(path ? { path } : {}),
           ...(depth !== undefined ? { depth } : {}),
         });
@@ -1091,7 +1004,7 @@ export function startBridgeServer(
       if (req.method === "GET" && pathname === "/api/selection") {
         requireAuth(req, pairingService);
         requirePluginSession();
-        const result = await enqueueCommand("get_selection", {});
+        const result = await commandQueue.enqueue("get_selection", {});
         sendJson(req, res, 200, result);
         return;
       }
@@ -1100,7 +1013,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("manage_tags", body);
+        const result = await commandQueue.enqueue("manage_tags", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1109,7 +1022,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("manage_attributes", body);
+        const result = await commandQueue.enqueue("manage_attributes", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1118,7 +1031,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("start_playtest", body);
+        const result = await commandQueue.enqueue("start_playtest", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1126,7 +1039,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/playtest/stop") {
         requireAuth(req, pairingService);
         requirePluginSession();
-        const result = await enqueueCommand("stop_playtest", {});
+        const result = await commandQueue.enqueue("stop_playtest", {});
         sendJson(req, res, 200, result);
         return;
       }
@@ -1135,7 +1048,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         requirePluginSession();
         const limit = coerceInteger(url.searchParams.get("limit") ?? undefined);
-        const result = await enqueueCommand("get_output", {
+        const result = await commandQueue.enqueue("get_output", {
           ...(limit !== undefined ? { limit } : {}),
         });
         sendJson(req, res, 200, result);
@@ -1145,7 +1058,7 @@ export function startBridgeServer(
       if (req.method === "GET" && pathname === "/api/teleport-graph") {
         requireAuth(req, pairingService);
         requirePluginSession();
-        const result = await enqueueCommand("teleport_graph", {});
+        const result = await commandQueue.enqueue("teleport_graph", {});
         sendJson(req, res, 200, result);
         return;
       }
@@ -1153,7 +1066,7 @@ export function startBridgeServer(
       if (req.method === "GET" && pathname === "/api/packages") {
         requireAuth(req, pairingService);
         requirePluginSession();
-        const result = await enqueueCommand("package_info", {});
+        const result = await commandQueue.enqueue("package_info", {});
         sendJson(req, res, 200, result);
         return;
       }
@@ -1162,7 +1075,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("build_ui", body);
+        const result = await commandQueue.enqueue("build_ui", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1171,7 +1084,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("apply_lighting", body);
+        const result = await commandQueue.enqueue("apply_lighting", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1180,7 +1093,7 @@ export function startBridgeServer(
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
         requirePluginSession();
-        const result = await enqueueCommand("terrain_generate", body);
+        const result = await commandQueue.enqueue("terrain_generate", body);
         sendJson(req, res, 200, result);
         return;
       }
@@ -1218,19 +1131,16 @@ export function startBridgeServer(
             }
           }
           pollWaiters.clear();
-          for (const command of [...commandsById.values()]) {
-            cleanupCommand(command.id);
-            command.reject(
-              new RbxError(
-                "RBX.BRIDGE.SHUTDOWN",
-                "Bridge server stopped; in-flight commands rejected",
-                false,
-                undefined,
-                "Restart the MCP server",
-                503,
-              ),
-            );
-          }
+          commandQueue.rejectAll(
+            new RbxError(
+              "RBX.BRIDGE.SHUTDOWN",
+              "Bridge server stopped; in-flight commands rejected",
+              false,
+              undefined,
+              "Restart the MCP server",
+              503,
+            ),
+          );
           server.close(() => undefined);
         },
       });

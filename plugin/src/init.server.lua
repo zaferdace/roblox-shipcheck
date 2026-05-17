@@ -1746,8 +1746,27 @@ local function startPolling()
 				if data.command then
 					processCommand(data)
 				end
-			elseif ok and response.StatusCode == 401 then
-				disconnect()
+			elseif ok and not response.Success then
+				-- On auth failure, attempt self-healing refresh before giving up.
+				-- RBX.AUTH.TOKEN_EXPIRED means the 24h session token has lapsed but the
+				-- pairing secret is still valid — refresh issues a new token without
+				-- requiring the user to re-pair. Any other structured error code (e.g.
+				-- RBX.AUTH.INVALID_TOKEN, RBX.AUTH.SESSION_REVOKED) is unrecoverable here,
+				-- so we fall through to disconnect().
+				local parsedOk, parsed = pcall(function() return HttpService:JSONDecode(response.Body) end)
+				if parsedOk and type(parsed) == "table"
+					and type(parsed.error) == "table"
+					and parsed.error.code == "RBX.AUTH.TOKEN_EXPIRED"
+				then
+					if refreshToken() then
+						-- refreshToken() already updated the module-level sessionToken;
+						-- just continue the loop — the next iteration's Bearer is now fresh.
+					else
+						disconnect()
+					end
+				else
+					disconnect()
+				end
 			else
 				task.wait(2)
 			end
@@ -1913,9 +1932,6 @@ local function connect()
 	print("[RBX-MCP] Connected to bridge")
 	startPolling()
 end
-
--- Suppress "unused" lint warnings for forward-compat helpers exposed via closures.
-local _ = refreshToken
 
 toggleButton.Click:Connect(function()
 	if connected then

@@ -35,14 +35,11 @@ It is a pre-release review assistant, not a release gate. It can miss things and
 
 ### Step 1: Install the Studio Plugin
 
-1. Go to the [Releases page](https://github.com/zaferdace/roblox-shipcheck/releases)
-2. Download `RobloxShipcheck.rbxm` from the latest release
-3. Find your Roblox Studio plugins folder:
-   - **Windows:** `%LOCALAPPDATA%\Roblox\Plugins\`
-   - **Mac:** `~/Documents/Roblox/Plugins/`
-   - **Or in Studio:** go to the **Plugins** tab → click **Plugins Folder**
-4. Copy `RobloxShipcheck.rbxm` into that folder
-5. Restart Roblox Studio — you should see a **"Roblox Workflow MCP"** toolbar
+Download `RobloxShipcheck.rbxm` from the [Releases page](https://github.com/zaferdace/roblox-shipcheck/releases) and copy into your Roblox Plugins folder:
+- **Windows:** `%LOCALAPPDATA%\Roblox\Plugins\`
+- **Mac:** `~/Documents/Roblox/Plugins/`
+
+Restart Roblox Studio.
 
 ### Step 2: Add the MCP Server
 
@@ -61,12 +58,45 @@ Add this to your AI client's MCP config (Claude Desktop, Cursor, VS Code + Copil
 
 > You need [Node.js](https://nodejs.org/) 18 or newer. `npx` downloads the server automatically on first use.
 
-### Step 3: Connect and Run
+### Step 3: Pair the Plugin (first run only)
 
-1. Open a place in Roblox Studio
-2. Click **"Toggle Connection"** in the plugin toolbar
-3. Studio Output should show: `[RBX-MCP] Connected to bridge`
-4. Ask your AI: `"Run shipcheck on my experience"` or `"Run a full pre-publish audit"`
+When the MCP server starts for the first time, it prints a 6-digit pairing code to stderr:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Studio plugin pairing code: 749182                          │
+│  Valid for 60 seconds.                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+In Roblox Studio:
+1. Click **"Pair Plugin"** in the Roblox Workflow MCP toolbar
+2. Enter the 6-digit code
+3. Click **Pair**
+4. Click **"Toggle Connection"** — plugin completes the challenge-response handshake
+
+The pairing secret is persisted via OS keychain (or `~/.config/roblox-shipcheck/pairing.json` fallback) and via `plugin:SetSetting` on the plugin side. You only pair once per machine.
+
+### Re-pairing
+
+If the plugin shows "Re-pair required" or `RBX.AUTH.PROOF_FAILED` errors, click **Pair Plugin** again and use a fresh code. To rotate the pairing secret server-side, delete the keychain entry (macOS Keychain Access app) or `~/.config/roblox-shipcheck/pairing.json` and restart.
+
+## Security model
+
+`roblox-shipcheck` v0.2.0+ uses challenge-response pairing:
+
+- **Pairing secret** (32 bytes, base64url) generated on first run, stored in OS keychain (preferred) or `~/.config/roblox-shipcheck/pairing.json` (mode 0600). Plugin stores the same secret via `plugin:SetSetting()`.
+- **Session token** (24h TTL) issued by `/studio/pair` and required as `Authorization: Bearer <token>` on every subsequent request.
+- **HMAC-SHA256 PROOF** on every `/studio/connect`: server nonce + plugin nonce. The pairing secret is never transmitted after the initial pair.
+- Every `/api/*` endpoint requires the Bearer token. Only `/api/ping` is public.
+- Session token refresh via `/studio/refresh-token` — no user interaction; the pairing secret is the refresh grant.
+- All errors return `{ ok: false, error: { code: "RBX.<CATEGORY>.<REASON>", message, retryable, request_id, ... } }`.
+
+This closes the localhost-session-hijack vector present in v0.1.x.
+
+### Step 4: Run an audit
+
+Ask your AI: `"Run shipcheck on my experience"` or `"Run a full pre-publish audit"`
 
 **Example prompts:**
 

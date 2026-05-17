@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.0 — 2026-05-17
+
+**BREAKING:** Plugin must now pair before connecting. Existing v0.1.x plugin installs will fail with `RBX.AUTH.MISSING_TOKEN` until re-paired.
+
+### Added
+
+- Challenge-response pairing: 6-digit pairing code → exchange for `pairing_secret` + `session_token`
+- HMAC-SHA256 PROOF handshake on `/studio/connect` (server nonce + plugin nonce, pairing secret never transmitted)
+- `Authorization: Bearer <session_token>` required on every `/studio/*` and `/api/*` route except `/api/ping`
+- Stateless `/studio/refresh-token` for 24h token expiry (no user re-pair needed)
+- Structured error envelope: `{ ok: false, error: { code, message, retryable, request_id, data?, remediation? } }`
+- Error code namespace `RBX.<CATEGORY>.<REASON>` (21+ codes)
+- Session lifecycle state machine: idle/active/reload_grace/quitting with configurable 45s grace (`RBX_RELOAD_GRACE_MS`)
+- `/studio/disconnect` endpoint for explicit `studio_quitting` vs `plugin_unloading` signaling
+- Bounded command queue (default 100, `RBX_QUEUE_MAX` env) with newest-reject backpressure
+- Server↔plugin major version handshake (HTTP 426 on mismatch)
+- Plugin source restored to `plugin/src/init.server.lua`; Rojo build pipeline via `aftman.toml`
+- Embedded sha2.lua (pure_lua_SHA, MIT) for HMAC-SHA256 in plugin
+- Rate limiting on `/studio/pair` AND `/studio/refresh-token` (5 attempts/min each, independent buckets)
+
+### Changed
+
+- `/studio/poll` and `/studio/response` migrate from `?token=` query param to `Authorization: Bearer` header
+- All 19 legacy `sendError` call sites migrated to `RbxError` throws + middleware envelope
+- MCP `CallToolRequest` errors include structured payload via `isError: true`
+- Plugin reconnects with stored credentials; surfaces "Re-pair required" UI on `RBX.AUTH.PROOF_FAILED`
+- `keytar` moved to `optionalDependencies` — graceful fallback to file-based secret storage
+
+### Security
+
+- Closes localhost session-hijack vector — any localhost process previously could overwrite the active plugin session or call `/api/*` once a session was established
+- Pairing secret is the root of trust; session tokens are short-lived challenge-response derivatives
+- Constant-time HMAC comparison via `crypto.timingSafeEqual`
+- Lazy TTL pruning on internal challenge/code/token maps prevents memory growth under floods
+- Refresh flow revokes all prior session tokens (single-instance constraint)
+
 ## [0.1.0] - 2026-03-29
 
 ### Added
