@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
-import { RbxError, sendErrorEnvelope } from "./errors.js";
+import { RbxError, tryCatchHandler } from "./errors.js";
 import { PairingService } from "./pairing.js";
 import { setCurrentSessionToken } from "./session-registry.js";
 import { checkVersionCompat } from "./version-check.js";
@@ -93,15 +93,6 @@ function sendJson(
   response.end(JSON.stringify(payload));
 }
 
-function sendError(
-  request: IncomingMessage,
-  response: ServerResponse,
-  statusCode: number,
-  message: string,
-): void {
-  sendJson(request, response, statusCode, { error: message });
-}
-
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let totalSize = 0;
@@ -109,7 +100,14 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     totalSize += buffer.length;
     if (totalSize > MAX_BODY_SIZE) {
-      throw new Error("Request body too large");
+      throw new RbxError(
+        "RBX.VALIDATION.BODY_TOO_LARGE",
+        `Request body exceeds ${MAX_BODY_SIZE} bytes`,
+        false,
+        { max_bytes: MAX_BODY_SIZE },
+        undefined,
+        413,
+      );
     }
     chunks.push(buffer);
   }
@@ -120,7 +118,18 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   if (raw.length === 0) {
     return undefined;
   }
-  return JSON.parse(raw) as unknown;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    throw new RbxError(
+      "RBX.VALIDATION.INVALID_JSON",
+      "Request body is not valid JSON",
+      false,
+      undefined,
+      undefined,
+      400,
+    );
+  }
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -280,7 +289,16 @@ export function startBridgeServer(
         createdAt: Date.now(),
         timeout: setTimeout(() => {
           cleanupCommand(entry.id);
-          reject(new Error(`Bridge command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`));
+          reject(
+            new RbxError(
+              "RBX.BRIDGE.COMMAND_TIMEOUT",
+              `Bridge command timed out after ${COMMAND_TIMEOUT_MS}ms: ${command}`,
+              true,
+              { command, timeoutMs: COMMAND_TIMEOUT_MS },
+              "Retry the operation; long-running tools may need a higher timeout (Phase 2 work)",
+              504,
+            ),
+          );
         }, COMMAND_TIMEOUT_MS),
       };
       queuedCommands.push(entry);
@@ -288,408 +306,359 @@ export function startBridgeServer(
       flushPollWaiters();
     });
 
-  const requirePluginSession = (request: IncomingMessage, response: ServerResponse): boolean => {
-    if (activeSession !== null) {
-      return true;
-    }
-    sendError(request, response, 503, "Roblox Studio plugin is not connected");
-    return false;
-  };
-
   const server = createServer(async (request, response) => {
-    try {
-      if (!request.url || !request.method) {
-        sendError(request, response, 400, "Invalid request");
+    const requestId = randomUUID();
+    response.setHeader("X-Request-Id", requestId);
+    await tryCatchHandler(async (req, res) => {
+      if (!req.url || !req.method) {
+        throw new RbxError(
+          "RBX.VALIDATION.INVALID_INPUT",
+          "Invalid request — missing URL or method",
+          false,
+          undefined,
+          undefined,
+          400,
+        );
+      }
+
+      if (req.method === "OPTIONS") {
+        withCorsHeaders(req, res);
+        res.statusCode = 204;
+        res.end();
         return;
       }
 
-      if (request.method === "OPTIONS") {
-        withCorsHeaders(request, response);
-        response.statusCode = 204;
-        response.end();
-        return;
-      }
-
-      const url = new URL(request.url, `http://${request.headers.host ?? "127.0.0.1"}`);
+      const url = new URL(req.url, `http://${req.headers.host ?? "127.0.0.1"}`);
       const pathname = url.pathname;
 
       // POST /studio/pair { code, plugin_version } → { pairing_secret, session_token }
       // One-time exchange. Rate-limited (F4).
-      if (request.method === "POST" && pathname === "/studio/pair") {
-        try {
-          const rl = pairingService.checkPairRateLimit();
-          if (!rl.allowed) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.RATE_LIMITED",
-              `Too many pair attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
-              true,
-              { resetInMs: rl.resetInMs },
-              "Wait then retry. If you didn't trigger this, check for another process abusing /studio/pair.",
-              429,
-              rl.resetInMs,
-            );
-          }
-          const body = await readJsonBody(request);
-          if (!isRecord(body)) {
-            throw new RbxError(
-              "RBX.VALIDATION.INVALID_INPUT",
-              "Body must be JSON object",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const code = asString(body["code"]);
-          const pluginVersion = asString(body["plugin_version"]);
-          if (!code || !pluginVersion) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.MISSING_FIELDS",
-              "Body must include {code, plugin_version}",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
-          if (compat === "major_mismatch") {
-            throw new RbxError(
-              "RBX.HANDSHAKE.VERSION_MISMATCH",
-              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
-              false,
-              { server: SERVER_VERSION, plugin: pluginVersion },
-              "Upgrade the older component to a matching major version",
-              426,
-            );
-          }
-          if (!pairingService.consumePairingCode(code)) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.INVALID_CODE",
-              "Pairing code is invalid or expired",
-              false,
-              undefined,
-              "Restart `npx roblox-shipcheck` to get a new code, then try again within 60s",
-              401,
-            );
-          }
-          // F10: clobber existing session on re-pair
-          if (activeSession) {
-            pairingService.revokeSessionToken(activeSession.token);
-            activeSession = null;
-            setCurrentSessionToken(undefined);
-          }
-          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
-          const session = pairingService.issueSessionToken();
-          sendJson(request, response, 200, {
-            ok: true,
-            pairing_secret: pairingSecret,
-            session_token: session.token,
-            session_token_expires_at: session.expiresAt,
-            server_version: SERVER_VERSION,
-          });
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/pair") {
+        const rl = pairingService.checkPairRateLimit();
+        if (!rl.allowed) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.RATE_LIMITED",
+            `Too many pair attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
+            true,
+            { resetInMs: rl.resetInMs },
+            "Wait then retry. If you didn't trigger this, check for another process abusing /studio/pair.",
+            429,
+            rl.resetInMs,
+          );
         }
+        const body = await readJsonBody(req);
+        if (!isRecord(body)) {
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Body must be JSON object",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const code = asString(body["code"]);
+        const pluginVersion = asString(body["plugin_version"]);
+        if (!code || !pluginVersion) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.MISSING_FIELDS",
+            "Body must include {code, plugin_version}",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
+        if (compat === "major_mismatch") {
+          throw new RbxError(
+            "RBX.HANDSHAKE.VERSION_MISMATCH",
+            `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
+            false,
+            { server: SERVER_VERSION, plugin: pluginVersion },
+            "Upgrade the older component to a matching major version",
+            426,
+          );
+        }
+        if (!pairingService.consumePairingCode(code)) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.INVALID_CODE",
+            "Pairing code is invalid or expired",
+            false,
+            undefined,
+            "Restart `npx roblox-shipcheck` to get a new code, then try again within 60s",
+            401,
+          );
+        }
+        // F10: clobber existing session on re-pair
+        if (activeSession) {
+          pairingService.revokeSessionToken(activeSession.token);
+          activeSession = null;
+          setCurrentSessionToken(undefined);
+        }
+        const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+        const session = pairingService.issueSessionToken();
+        sendJson(req, res, 200, {
+          ok: true,
+          pairing_secret: pairingSecret,
+          session_token: session.token,
+          session_token_expires_at: session.expiresAt,
+          server_version: SERVER_VERSION,
+        });
         return;
       }
 
       // POST /studio/connect { version, nonce_client }
       // Bearer required. Issues HMAC challenge.
-      if (request.method === "POST" && pathname === "/studio/connect") {
-        try {
-          const tokenStatus = verifyBearerAuth(request, pairingService);
-          if (tokenStatus.outcome !== "valid") {
-            throw bearerOutcomeToError(tokenStatus.outcome);
-          }
-          const body = await readJsonBody(request);
-          if (!isRecord(body)) {
-            throw new RbxError(
-              "RBX.VALIDATION.INVALID_INPUT",
-              "Body must be JSON object",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const pluginVersion = asString(body["version"]);
-          const nonceClient = asString(body["nonce_client"]);
-          if (!pluginVersion || !nonceClient) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.MISSING_FIELDS",
-              "/studio/connect body must include {version, nonce_client}",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
-          if (compat === "major_mismatch") {
-            throw new RbxError(
-              "RBX.HANDSHAKE.VERSION_MISMATCH",
-              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
-              false,
-              { server: SERVER_VERSION, plugin: pluginVersion },
-              "Upgrade the older component",
-              426,
-            );
-          }
-          if (compat === "minor_warning") {
-            console.error(
-              `[roblox-shipcheck] WARN: minor drift server ${SERVER_VERSION} vs plugin ${pluginVersion}`,
-            );
-          }
-          const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
-          sendJson(request, response, 200, {
-            ok: true,
-            challenge_id: challengeId,
-            nonce_server: nonceServer,
-          });
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/connect") {
+        const tokenStatus = verifyBearerAuth(req, pairingService);
+        if (tokenStatus.outcome !== "valid") {
+          throw bearerOutcomeToError(tokenStatus.outcome);
         }
+        const body = await readJsonBody(req);
+        if (!isRecord(body)) {
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Body must be JSON object",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const pluginVersion = asString(body["version"]);
+        const nonceClient = asString(body["nonce_client"]);
+        if (!pluginVersion || !nonceClient) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.MISSING_FIELDS",
+            "/studio/connect body must include {version, nonce_client}",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
+        if (compat === "major_mismatch") {
+          throw new RbxError(
+            "RBX.HANDSHAKE.VERSION_MISMATCH",
+            `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
+            false,
+            { server: SERVER_VERSION, plugin: pluginVersion },
+            "Upgrade the older component",
+            426,
+          );
+        }
+        if (compat === "minor_warning") {
+          console.error(
+            `[roblox-shipcheck] WARN: minor drift server ${SERVER_VERSION} vs plugin ${pluginVersion}`,
+          );
+        }
+        const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
+        sendJson(req, res, 200, {
+          ok: true,
+          challenge_id: challengeId,
+          nonce_server: nonceServer,
+        });
         return;
       }
 
       // POST /studio/connect/proof { challenge_id, proof }
       // Final handshake step. On success, marks plugin connected.
-      if (request.method === "POST" && pathname === "/studio/connect/proof") {
-        try {
-          const tokenStatus = verifyBearerAuth(request, pairingService);
-          if (tokenStatus.outcome !== "valid") {
-            throw bearerOutcomeToError(tokenStatus.outcome);
-          }
-          const body = await readJsonBody(request);
-          if (!isRecord(body)) {
-            throw new RbxError(
-              "RBX.VALIDATION.INVALID_INPUT",
-              "Body must be JSON object",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const challengeId = asString(body["challenge_id"]);
-          const proof = asString(body["proof"]);
-          if (!challengeId || !proof) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.MISSING_FIELDS",
-              "Body must include {challenge_id, proof}",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
-          if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
-            // F10: clear stale registry value on proof failure
-            setCurrentSessionToken(undefined);
-            throw new RbxError(
-              "RBX.AUTH.PROOF_FAILED",
-              "PROOF challenge failed — invalid HMAC or expired challenge",
-              false,
-              undefined,
-              "Re-pair the plugin via the 'Pair Plugin' toolbar button",
-              401,
-            );
-          }
-          activeSession = {
-            id: randomUUID(),
-            token: tokenStatus.token,
-            connectedAt: Date.now(),
-            lastPollAt: Date.now(),
-          };
-          setCurrentSessionToken(activeSession.token);
-          sendJson(request, response, 200, {
-            ok: true,
-            session_id: activeSession.id,
-          });
-          flushPollWaiters();
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/connect/proof") {
+        const tokenStatus = verifyBearerAuth(req, pairingService);
+        if (tokenStatus.outcome !== "valid") {
+          throw bearerOutcomeToError(tokenStatus.outcome);
         }
+        const body = await readJsonBody(req);
+        if (!isRecord(body)) {
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Body must be JSON object",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const challengeId = asString(body["challenge_id"]);
+        const proof = asString(body["proof"]);
+        if (!challengeId || !proof) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.MISSING_FIELDS",
+            "Body must include {challenge_id, proof}",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+        if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+          // F10: clear stale registry value on proof failure
+          setCurrentSessionToken(undefined);
+          throw new RbxError(
+            "RBX.AUTH.PROOF_FAILED",
+            "PROOF challenge failed — invalid HMAC or expired challenge",
+            false,
+            undefined,
+            "Re-pair the plugin via the 'Pair Plugin' toolbar button",
+            401,
+          );
+        }
+        activeSession = {
+          id: randomUUID(),
+          token: tokenStatus.token,
+          connectedAt: Date.now(),
+          lastPollAt: Date.now(),
+        };
+        setCurrentSessionToken(activeSession.token);
+        sendJson(req, res, 200, {
+          ok: true,
+          session_id: activeSession.id,
+        });
+        flushPollWaiters();
         return;
       }
 
       // POST /studio/refresh-token { plugin_version, nonce_client }
       // Open endpoint (rate-limited). Plugin proves possession of pairing_secret
       // to mint a fresh session_token. The expired bearer is not consulted (F5).
-      if (request.method === "POST" && pathname === "/studio/refresh-token") {
-        try {
-          const rl = pairingService.checkRefreshRateLimit();
-          if (!rl.allowed) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.RATE_LIMITED",
-              `Too many refresh attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
-              true,
-              { resetInMs: rl.resetInMs },
-              undefined,
-              429,
-              rl.resetInMs,
-            );
-          }
-          const body = await readJsonBody(request);
-          if (!isRecord(body)) {
-            throw new RbxError(
-              "RBX.VALIDATION.INVALID_INPUT",
-              "Body must be JSON",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const pluginVersion = asString(body["plugin_version"]);
-          const nonceClient = asString(body["nonce_client"]);
-          if (!pluginVersion || !nonceClient) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.MISSING_FIELDS",
-              "Body must include {plugin_version, nonce_client}",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          if (checkVersionCompat(SERVER_VERSION, pluginVersion) === "major_mismatch") {
-            throw new RbxError(
-              "RBX.HANDSHAKE.VERSION_MISMATCH",
-              `Cannot refresh: server v${SERVER_VERSION} vs plugin v${pluginVersion}`,
-              false,
-              { server: SERVER_VERSION, plugin: pluginVersion },
-              "Upgrade the older component",
-              426,
-            );
-          }
-          const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
-          sendJson(request, response, 200, {
-            ok: true,
-            challenge_id: challengeId,
-            nonce_server: nonceServer,
-          });
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/refresh-token") {
+        const rl = pairingService.checkRefreshRateLimit();
+        if (!rl.allowed) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.RATE_LIMITED",
+            `Too many refresh attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
+            true,
+            { resetInMs: rl.resetInMs },
+            undefined,
+            429,
+            rl.resetInMs,
+          );
         }
+        const body = await readJsonBody(req);
+        if (!isRecord(body)) {
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Body must be JSON",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const pluginVersion = asString(body["plugin_version"]);
+        const nonceClient = asString(body["nonce_client"]);
+        if (!pluginVersion || !nonceClient) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.MISSING_FIELDS",
+            "Body must include {plugin_version, nonce_client}",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        if (checkVersionCompat(SERVER_VERSION, pluginVersion) === "major_mismatch") {
+          throw new RbxError(
+            "RBX.HANDSHAKE.VERSION_MISMATCH",
+            `Cannot refresh: server v${SERVER_VERSION} vs plugin v${pluginVersion}`,
+            false,
+            { server: SERVER_VERSION, plugin: pluginVersion },
+            "Upgrade the older component",
+            426,
+          );
+        }
+        const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
+        sendJson(req, res, 200, {
+          ok: true,
+          challenge_id: challengeId,
+          nonce_server: nonceServer,
+        });
         return;
       }
 
       // POST /studio/refresh-token/proof { challenge_id, proof }
       // Verifies HMAC against current pairing_secret. Mints fresh session_token.
-      if (request.method === "POST" && pathname === "/studio/refresh-token/proof") {
-        try {
-          const body = await readJsonBody(request);
-          if (!isRecord(body)) {
-            throw new RbxError(
-              "RBX.VALIDATION.INVALID_INPUT",
-              "Body must be JSON",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const challengeId = asString(body["challenge_id"]);
-          const proof = asString(body["proof"]);
-          if (!challengeId || !proof) {
-            throw new RbxError(
-              "RBX.HANDSHAKE.MISSING_FIELDS",
-              "Body must include {challenge_id, proof}",
-              false,
-              undefined,
-              undefined,
-              400,
-            );
-          }
-          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
-          if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
-            // F10: a refresh failure invalidates trust in the current credential state.
-            // Clear registry BEFORE the throw so subsequent MCP-side requests get
-            // RBX.AUTH.MISSING_TOKEN rather than continuing with a stale token.
-            setCurrentSessionToken(undefined);
-            throw new RbxError(
-              "RBX.AUTH.PROOF_FAILED",
-              "Refresh PROOF failed — pairing_secret mismatch or expired challenge",
-              false,
-              undefined,
-              "Re-pair via 'Pair Plugin' toolbar button",
-              401,
-            );
-          }
-          // F11-followup (review item 11): revoke ALL session tokens before issuing new one.
-          // Single-instance scope: only one paired plugin at a time, so stale tokens left over
-          // from prior pair attempts are NOT desirable. Refresh = reset.
-          // F10: clear registry before revoking stale tokens
-          setCurrentSessionToken(undefined);
-          pairingService.revokeAllSessionTokens();
-          const fresh = pairingService.issueSessionToken();
-          if (activeSession) {
-            activeSession.token = fresh.token;
-          }
-          setCurrentSessionToken(fresh.token);
-          sendJson(request, response, 200, {
-            ok: true,
-            session_token: fresh.token,
-            session_token_expires_at: fresh.expiresAt,
-          });
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/refresh-token/proof") {
+        const body = await readJsonBody(req);
+        if (!isRecord(body)) {
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Body must be JSON",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
         }
+        const challengeId = asString(body["challenge_id"]);
+        const proof = asString(body["proof"]);
+        if (!challengeId || !proof) {
+          throw new RbxError(
+            "RBX.HANDSHAKE.MISSING_FIELDS",
+            "Body must include {challenge_id, proof}",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
+        }
+        const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+        if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+          // F10: a refresh failure invalidates trust in the current credential state.
+          // Clear registry BEFORE the throw so subsequent MCP-side requests get
+          // RBX.AUTH.MISSING_TOKEN rather than continuing with a stale token.
+          setCurrentSessionToken(undefined);
+          throw new RbxError(
+            "RBX.AUTH.PROOF_FAILED",
+            "Refresh PROOF failed — pairing_secret mismatch or expired challenge",
+            false,
+            undefined,
+            "Re-pair via 'Pair Plugin' toolbar button",
+            401,
+          );
+        }
+        // F11-followup (review item 11): revoke ALL session tokens before issuing new one.
+        // Single-instance scope: only one paired plugin at a time, so stale tokens left over
+        // from prior pair attempts are NOT desirable. Refresh = reset.
+        // F10: clear registry before revoking stale tokens
+        setCurrentSessionToken(undefined);
+        pairingService.revokeAllSessionTokens();
+        const fresh = pairingService.issueSessionToken();
+        if (activeSession) {
+          activeSession.token = fresh.token;
+        }
+        setCurrentSessionToken(fresh.token);
+        sendJson(req, res, 200, {
+          ok: true,
+          session_token: fresh.token,
+          session_token_expires_at: fresh.expiresAt,
+        });
         return;
       }
 
-      if (request.method === "GET" && pathname === "/studio/poll") {
+      if (req.method === "GET" && pathname === "/studio/poll") {
         // Capture the token at poll entry so the long-poll waiter can detect
         // session replacement (re-pair, refresh, revoke) and bail out instead
         // of delivering commands meant for the old plugin connection.
-        let boundToken: string;
-        try {
-          const auth = requireAuth(request, pairingService);
-          if (!activeSession || activeSession.token !== auth.token) {
-            throw new RbxError(
-              "RBX.AUTH.SESSION_REVOKED",
-              "Session token not bound to active plugin connection",
-              false,
-              undefined,
-              "Plugin must re-run /studio/connect",
-              401,
-            );
-          }
-          activeSession.lastPollAt = Date.now();
-          boundToken = auth.token;
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+        const auth = requireAuth(req, pairingService);
+        if (!activeSession || activeSession.token !== auth.token) {
+          throw new RbxError(
+            "RBX.AUTH.SESSION_REVOKED",
+            "Session token not bound to active plugin connection",
+            false,
+            undefined,
+            "Plugin must re-run /studio/connect",
+            401,
+          );
         }
+        activeSession.lastPollAt = Date.now();
+        const boundToken = auth.token;
         const next = queuedCommands.shift();
         if (next) {
-          sendJson(request, response, 200, {
+          sendJson(req, res, 200, {
             id: next.id,
             command: next.command,
             params: next.params,
@@ -697,33 +666,30 @@ export function startBridgeServer(
           return;
         }
         const waiter = {
-          response,
-          request,
+          response: res,
+          request: req,
           interval: setInterval(() => {
             const sessionMismatch = !activeSession || activeSession.token !== boundToken;
-            if (sessionMismatch || response.writableEnded || response.destroyed || stopping) {
+            if (sessionMismatch || res.writableEnded || res.destroyed || stopping) {
               clearInterval(waiter.interval);
               clearTimeout(waiter.timeout);
               pollWaiters.delete(waiter);
-              if (!response.writableEnded) {
+              if (!res.writableEnded) {
                 if (sessionMismatch) {
                   // activeSession is null OR was replaced by a new pair/refresh.
                   // Either way: don't deliver commands for a stale plugin connection.
-                  sendErrorEnvelope(
-                    request,
-                    response,
-                    new RbxError(
-                      "RBX.AUTH.SESSION_REVOKED",
-                      "Session ended or replaced during long-poll",
-                      false,
-                      undefined,
-                      "Reconnect",
-                      401,
-                    ),
-                    randomUUID(),
-                  );
+                  sendJson(req, res, 401, {
+                    ok: false,
+                    error: {
+                      code: "RBX.AUTH.SESSION_REVOKED",
+                      message: "Session ended or replaced during long-poll",
+                      retryable: false,
+                      request_id: requestId,
+                      remediation: "Reconnect",
+                    },
+                  });
                 } else {
-                  sendJson(request, response, 200, { command: null });
+                  sendJson(req, res, 200, { command: null });
                 }
               }
               return;
@@ -742,7 +708,7 @@ export function startBridgeServer(
             clearInterval(waiter.interval);
             clearTimeout(waiter.timeout);
             pollWaiters.delete(waiter);
-            sendJson(request, response, 200, {
+            sendJson(req, res, 200, {
               id: command.id,
               command: command.command,
               params: command.params,
@@ -751,13 +717,13 @@ export function startBridgeServer(
           timeout: setTimeout(() => {
             clearInterval(waiter.interval);
             pollWaiters.delete(waiter);
-            if (!response.writableEnded) {
-              sendJson(request, response, 200, { command: null });
+            if (!res.writableEnded) {
+              sendJson(req, res, 200, { command: null });
             }
           }, POLL_WAIT_MS),
         };
         pollWaiters.add(waiter);
-        request.on("close", () => {
+        req.on("close", () => {
           clearInterval(waiter.interval);
           clearTimeout(waiter.timeout);
           pollWaiters.delete(waiter);
@@ -765,40 +731,50 @@ export function startBridgeServer(
         return;
       }
 
-      if (request.method === "POST" && pathname === "/studio/response") {
-        try {
-          const auth = requireAuth(request, pairingService);
-          if (!activeSession || activeSession.token !== auth.token) {
-            throw new RbxError(
-              "RBX.AUTH.SESSION_REVOKED",
-              "Session token not bound to active plugin connection",
-              false,
-              undefined,
-              "Plugin must re-run /studio/connect",
-              401,
-            );
-          }
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/studio/response") {
+        const auth = requireAuth(req, pairingService);
+        if (!activeSession || activeSession.token !== auth.token) {
+          throw new RbxError(
+            "RBX.AUTH.SESSION_REVOKED",
+            "Session token not bound to active plugin connection",
+            false,
+            undefined,
+            "Plugin must re-run /studio/connect",
+            401,
+          );
         }
-        const body = await readJsonBody(request);
+        const body = await readJsonBody(req);
         if (!isRecord(body)) {
-          sendError(request, response, 400, "Request body must be a JSON object");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.INVALID_INPUT",
+            "Request body must be a JSON object",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
         }
         const commandId = asString(body["commandId"]);
         if (!commandId) {
-          sendError(request, response, 400, "Missing commandId");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.MISSING_FIELD",
+            "Missing commandId",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
         }
         const command = cleanupCommand(commandId);
         if (!command) {
-          sendError(request, response, 404, "Command not found");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.UNKNOWN_COMMAND",
+            "Command ID not found in pending queue",
+            false,
+            undefined,
+            undefined,
+            404,
+          );
         }
         const errorMessage = asString(body["error"]);
         if (errorMessage) {
@@ -806,12 +782,12 @@ export function startBridgeServer(
         } else {
           command.resolve(body["result"]);
         }
-        sendJson(request, response, 200, { ok: true });
+        sendJson(req, res, 200, { ok: true });
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/ping") {
-        sendJson(request, response, 200, {
+      if (req.method === "GET" && pathname === "/api/ping") {
+        sendJson(req, res, 200, {
           ok: true,
           version: SERVER_VERSION,
           plugin_connected: activeSession !== null,
@@ -819,18 +795,17 @@ export function startBridgeServer(
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/datamodel") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/datamodel") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const params = {
           max_depth: coerceInteger(url.searchParams.get("max_depth") ?? undefined),
@@ -840,349 +815,356 @@ export function startBridgeServer(
           ),
         };
         const result = await enqueueCommand("get_datamodel", params);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/search") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/search") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("search", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/screenshot") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/screenshot") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const viewport = url.searchParams.get("viewport") ?? "game";
         const result = await enqueueCommand("get_screenshot", { viewport });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/tests/run") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/tests/run") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("run_tests", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname.startsWith("/api/tests/results/")) {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname.startsWith("/api/tests/results/")) {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const runId = decodeURIComponent(pathname.slice("/api/tests/results/".length));
         if (!runId) {
-          sendError(request, response, 400, "Missing runId");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.MISSING_FIELD",
+            "Missing runId in URL",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
         }
         const result = await enqueueCommand("get_test_results", { runId });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/patch") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/patch") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("apply_patch", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/patch/undo") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/patch/undo") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("undo_patch", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/execute") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/execute") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("execute_code", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/script/source") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/script/source") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const path = url.searchParams.get("path") ?? undefined;
         if (!path) {
-          sendError(request, response, 400, "Missing path");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.MISSING_FIELD",
+            "Missing 'path' query param",
+            false,
+            { field: "path" },
+            undefined,
+            400,
+          );
         }
         const result = await enqueueCommand("get_script_source", { path });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/script/source") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/script/source") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("set_script_source", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
       if (
-        request.method === "GET" &&
+        req.method === "GET" &&
         pathname.startsWith("/api/instance/") &&
         pathname.endsWith("/properties") &&
         pathname !== "/api/instance/properties"
       ) {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const instanceId = decodeURIComponent(
           pathname.slice("/api/instance/".length, -"/properties".length),
         );
         if (!instanceId) {
-          sendError(request, response, 400, "Missing instance id");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.MISSING_FIELD",
+            "Missing instance id in URL",
+            false,
+            undefined,
+            undefined,
+            400,
+          );
         }
         const result = await enqueueCommand("get_properties", { id: instanceId });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/instance/properties") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/instance/properties") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const path = url.searchParams.get("path") ?? undefined;
         if (!path) {
-          sendError(request, response, 400, "Missing path");
-          return;
+          throw new RbxError(
+            "RBX.VALIDATION.MISSING_FIELD",
+            "Missing 'path' query param",
+            false,
+            { field: "path" },
+            undefined,
+            400,
+          );
         }
         const result = await enqueueCommand("get_properties", { path });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/instance/create") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/instance/create") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("create_instance", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/instance/delete") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/instance/delete") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("delete_instance", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/instance/clone") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/instance/clone") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("clone_instance", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/instance/move") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/instance/move") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("move_instance", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/instance/set-property") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/instance/set-property") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("set_instance_property", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/instance/children") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/instance/children") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const path = url.searchParams.get("path") ?? undefined;
         const depth = coerceInteger(url.searchParams.get("depth") ?? undefined);
@@ -1190,230 +1172,215 @@ export function startBridgeServer(
           ...(path ? { path } : {}),
           ...(depth !== undefined ? { depth } : {}),
         });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/selection") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/selection") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const result = await enqueueCommand("get_selection", {});
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/tags") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/tags") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("manage_tags", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/attributes") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/attributes") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("manage_attributes", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/playtest/start") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/playtest/start") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("start_playtest", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/playtest/stop") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "POST" && pathname === "/api/playtest/stop") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const result = await enqueueCommand("stop_playtest", {});
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/output") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/output") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const limit = coerceInteger(url.searchParams.get("limit") ?? undefined);
         const result = await enqueueCommand("get_output", {
           ...(limit !== undefined ? { limit } : {}),
         });
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/teleport-graph") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/teleport-graph") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const result = await enqueueCommand("teleport_graph", {});
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "GET" && pathname === "/api/packages") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
-        }
-        if (!requirePluginSession(request, response)) {
-          return;
+      if (req.method === "GET" && pathname === "/api/packages") {
+        requireAuth(req, pairingService);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
         const result = await enqueueCommand("package_info", {});
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/ui/build") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/ui/build") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("build_ui", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/lighting/apply") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/lighting/apply") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("apply_lighting", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      if (request.method === "POST" && pathname === "/api/terrain/generate") {
-        try {
-          requireAuth(request, pairingService);
-        } catch (err) {
-          if (err instanceof RbxError) {
-            sendErrorEnvelope(request, response, err, randomUUID());
-            return;
-          }
-          throw err;
+      if (req.method === "POST" && pathname === "/api/terrain/generate") {
+        requireAuth(req, pairingService);
+        const body = await readJsonBody(req);
+        if (activeSession === null) {
+          throw new RbxError(
+            "RBX.PLUGIN.NOT_CONNECTED",
+            "Roblox Studio plugin is not connected",
+            true,
+            undefined,
+            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
+            503,
+          );
         }
-        if (!requirePluginSession(request, response)) {
-          return;
-        }
-        const body = await readJsonBody(request);
         const result = await enqueueCommand("terrain_generate", body);
-        sendJson(request, response, 200, result);
+        sendJson(req, res, 200, result);
         return;
       }
 
-      sendError(request, response, 404, "Route not found");
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        sendError(request, response, 400, "Invalid JSON in request body");
-        return;
-      }
-      const message = error instanceof Error ? error.message : "Internal server error";
-      if (message === "Request body too large") {
-        sendError(request, response, 413, message);
-        return;
-      }
-      sendError(request, response, 500, message);
-    }
+      throw new RbxError(
+        "RBX.VALIDATION.UNKNOWN_ROUTE",
+        `${req.method} ${pathname}`,
+        false,
+        undefined,
+        undefined,
+        404,
+      );
+    })(request, response, requestId);
   });
 
   return new Promise((resolve, reject) => {
@@ -1438,7 +1405,16 @@ export function startBridgeServer(
           pollWaiters.clear();
           for (const command of [...commandsById.values()]) {
             cleanupCommand(command.id);
-            command.reject(new Error("Bridge server stopped"));
+            command.reject(
+              new RbxError(
+                "RBX.BRIDGE.SHUTDOWN",
+                "Bridge server stopped; in-flight commands rejected",
+                false,
+                undefined,
+                "Restart the MCP server",
+                503,
+              ),
+            );
           }
           server.close(() => undefined);
         },

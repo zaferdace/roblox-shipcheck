@@ -1,8 +1,10 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { startBridgeServer } from "./bridge/index.js";
+import { RbxError } from "./bridge/errors.js";
 import { PairingService } from "./bridge/pairing.js";
 import { SERVER_VERSION } from "./shared.js";
 import "./tools/register-all.js";
@@ -18,13 +20,59 @@ const tools = getToolDefinitions();
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const requestId = randomUUID();
   const { name, arguments: args } = request.params;
   try {
     const result = await executeTool(name, args);
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   } catch (error) {
+    if (error instanceof RbxError) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                ok: false,
+                error: {
+                  code: error.code,
+                  message: error.message,
+                  retryable: error.retryable,
+                  request_id: requestId,
+                  ...(error.data !== undefined ? { data: error.data } : {}),
+                  ...(error.remediation !== undefined ? { remediation: error.remediation } : {}),
+                },
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
+    }
     if (error instanceof Error && error.name === "ZodError") {
-      throw new Error(`Invalid input: ${error.message}`, { cause: error });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                ok: false,
+                error: {
+                  code: "RBX.VALIDATION.INVALID_INPUT",
+                  message: `Invalid input: ${error.message}`,
+                  retryable: false,
+                  request_id: requestId,
+                },
+              },
+              null,
+              2,
+            ),
+          },
+        ],
+        isError: true,
+      };
     }
     throw error;
   }

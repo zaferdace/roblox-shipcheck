@@ -61,13 +61,47 @@ describe("Bearer middleware on /api/*", () => {
     expect((body as { error: { code: string } }).error.code).toBe("RBX.AUTH.TOKEN_EXPIRED");
   });
 
-  // This test verifies auth passes but plugin isn't connected → legacy 503 response.
-  // Commit 5 will migrate this to RBX.PLUGIN.NOT_CONNECTED envelope.
-  it("api/datamodel with valid token but no plugin returns 503", async () => {
+  it("api/datamodel with valid token but no plugin returns 503 RBX.PLUGIN.NOT_CONNECTED", async () => {
     const { token } = pairing.issueSessionToken();
-    const { status } = await fetchJson(`${baseUrl}/api/datamodel`, {
+    const { status, body } = await fetchJson(`${baseUrl}/api/datamodel`, {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(status).toBe(503);
+    expect((body as { error: { code: string } }).error.code).toBe("RBX.PLUGIN.NOT_CONNECTED");
+  });
+
+  it("api/patch with oversized body returns 413 RBX.VALIDATION.BODY_TOO_LARGE", async () => {
+    const { token } = pairing.issueSessionToken();
+    const oversized = "x".repeat(11 * 1024 * 1024); // 11 MiB, above MAX_BODY_SIZE
+    const { status, body } = await fetchJson(`${baseUrl}/api/patch`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ junk: oversized }),
+    });
+    expect(status).toBe(413);
+    expect((body as { error: { code: string } }).error.code).toBe("RBX.VALIDATION.BODY_TOO_LARGE");
+  });
+
+  it("api/patch with invalid JSON returns 400 RBX.VALIDATION.INVALID_JSON", async () => {
+    const { token } = pairing.issueSessionToken();
+    const { status, body } = await fetchJson(`${baseUrl}/api/patch`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: "{not valid json",
+    });
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe("RBX.VALIDATION.INVALID_JSON");
+  });
+
+  it("unknown route returns 404 RBX.VALIDATION.UNKNOWN_ROUTE", async () => {
+    const { status, body } = await fetchJson(`${baseUrl}/api/nonexistent`);
+    expect(status).toBe(404);
+    expect((body as { error: { code: string } }).error.code).toBe("RBX.VALIDATION.UNKNOWN_ROUTE");
   });
 });

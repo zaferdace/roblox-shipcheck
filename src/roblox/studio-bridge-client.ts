@@ -1,3 +1,4 @@
+import { RbxError } from "../bridge/errors.js";
 import { getCurrentSessionToken } from "../bridge/session-registry.js";
 import type {
   InstanceNode,
@@ -279,6 +280,30 @@ export class StudioBridgeClient {
       const response = await fetch(url, requestInit);
       if (!response.ok) {
         const body = await safeReadBody(response);
+        try {
+          const parsed = JSON.parse(body) as {
+            error?: {
+              code?: string;
+              message?: string;
+              retryable?: boolean;
+              data?: Record<string, unknown>;
+              remediation?: string;
+            };
+          };
+          if (parsed.error?.code) {
+            throw new RbxError(
+              parsed.error.code,
+              parsed.error.message ?? "Bridge error",
+              parsed.error.retryable ?? false,
+              parsed.error.data,
+              parsed.error.remediation,
+              response.status,
+            );
+          }
+        } catch (parseErr) {
+          if (parseErr instanceof RbxError) throw parseErr;
+          // Fall through to legacy StudioBridgeError for non-envelope responses
+        }
         throw new StudioBridgeError(
           `Roblox Studio bridge request failed (${response.status}) at ${route}: ${body}`,
         );
