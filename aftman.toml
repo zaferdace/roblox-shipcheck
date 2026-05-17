@@ -1,0 +1,6 @@
+# Aftman manages Roblox toolchain versions for this repo.
+# Install: https://github.com/LPGhatguy/aftman
+# Then run `aftman install` once to populate ~/.aftman/bin.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.4.4"

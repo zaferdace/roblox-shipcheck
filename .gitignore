@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
+
+# Plugin build artifacts (built by Rojo, attached to GitHub releases).
+# dist/ is already ignored above; pattern below kept for documentation.
+plugin/src/*.rbxm
+plugin/build/

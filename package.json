@@ -21,7 +21,10 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run build:plugin",
+    "build:ts": "tsc",
+    "build:plugin": "rojo build plugin/default.project.json -o dist/RobloxShipcheck.rbxm",
+    "prebuild:plugin": "command -v rojo >/dev/null 2>&1 || (echo 'Rojo not found. Install Aftman (https://github.com/LPGhatguy/aftman) then run: aftman install' && exit 1)",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "lint": "eslint src/",
