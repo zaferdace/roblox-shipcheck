@@ -1,7 +1,7 @@
 local BRIDGE_HOST = "http://127.0.0.1"
 local BRIDGE_PORT = 33796
 local POLL_INTERVAL = 0.5
-local PLUGIN_VERSION = "0.1.0"
+local PLUGIN_VERSION = "0.2.0"
 local MAX_JSON_BREADTH = 100
 local MAX_TEST_RESULTS = 50
 

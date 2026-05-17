@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
+import { checkVersionCompat } from "./version-check.js";
 
 interface PendingCommand {
   id: string;
@@ -260,7 +261,39 @@ export function startBridgeServer(
       const pathname = url.pathname;
 
       if (request.method === "POST" && pathname === "/studio/connect") {
-        await readJsonBody(request);
+        const body = await readJsonBody(request);
+        const pluginVersion = isRecord(body) ? asString(body["version"]) : undefined;
+        if (!pluginVersion) {
+          sendError(request, response, 400, "Plugin must send {version} in /studio/connect body");
+          return;
+        }
+        const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
+        if (compat === "invalid") {
+          sendError(request, response, 400, `Invalid plugin version string: ${pluginVersion}`);
+          return;
+        }
+        if (compat === "major_mismatch") {
+          // TODO(Commit 5 / F17): migrate to throw new RbxError(
+          //   "RBX.HANDSHAKE.VERSION_MISMATCH", ..., 426, retryAfterMs?,
+          //   data: { server: SERVER_VERSION, plugin: pluginVersion });
+          // Preserve server_version/plugin_version inside error.data — they
+          // are the only structured fields exposed by THIS legacy branch
+          // and must not be dropped when the envelope migration lands.
+          sendJson(request, response, 426, {
+            error:
+              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}. ` +
+              `Major version must match.`,
+            server_version: SERVER_VERSION,
+            plugin_version: pluginVersion,
+          });
+          return;
+        }
+        if (compat === "minor_warning") {
+          console.error(
+            `[roblox-shipcheck] WARN: minor version drift — server v${SERVER_VERSION} ` +
+              `vs plugin v${pluginVersion}. Continuing but recommend upgrade.`,
+          );
+        }
         activeSession = {
           id: randomUUID(),
           token: randomUUID(),

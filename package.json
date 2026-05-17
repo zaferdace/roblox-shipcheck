@@ -1,6 +1,6 @@
 {
   "name": "roblox-shipcheck",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Heuristic release checks and smoke tests for Roblox projects via MCP",
   "type": "module",
   "main": "dist/index.js",
