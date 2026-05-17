@@ -4,6 +4,7 @@ import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
 import { RbxError, sendErrorEnvelope } from "./errors.js";
 import { PairingService } from "./pairing.js";
+import { setCurrentSessionToken } from "./session-registry.js";
 import { checkVersionCompat } from "./version-check.js";
 
 interface PendingCommand {
@@ -126,13 +127,6 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getSingleQueryValue(value: string | string[] | undefined): string | undefined {
-  if (typeof value === "string") {
-    return value;
-  }
-  return value?.[0];
-}
-
 function coerceBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) {
     return undefined;
@@ -203,6 +197,12 @@ function bearerOutcomeToError(outcome: "missing" | "invalid" | "expired"): RbxEr
     "Plugin must re-pair via 'Pair Plugin' toolbar button",
     401,
   );
+}
+
+function requireAuth(request: IncomingMessage, pairing: PairingService): { token: string } {
+  const status = verifyBearerAuth(request, pairing);
+  if (status.outcome === "valid") return { token: status.token };
+  throw bearerOutcomeToError(status.outcome);
 }
 
 export interface BridgeServerOptions {
@@ -288,9 +288,6 @@ export function startBridgeServer(
       flushPollWaiters();
     });
 
-  const requireToken = (token: string | undefined): boolean =>
-    typeof token === "string" && activeSession !== null && activeSession.token === token;
-
   const requirePluginSession = (request: IncomingMessage, response: ServerResponse): boolean => {
     if (activeSession !== null) {
       return true;
@@ -375,6 +372,12 @@ export function startBridgeServer(
               "Restart `npx roblox-shipcheck` to get a new code, then try again within 60s",
               401,
             );
+          }
+          // F10: clobber existing session on re-pair
+          if (activeSession) {
+            pairingService.revokeSessionToken(activeSession.token);
+            activeSession = null;
+            setCurrentSessionToken(undefined);
           }
           const pairingSecret = await pairingService.loadOrCreatePairingSecret();
           const session = pairingService.issueSessionToken();
@@ -491,6 +494,8 @@ export function startBridgeServer(
           }
           const pairingSecret = await pairingService.loadOrCreatePairingSecret();
           if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+            // F10: clear stale registry value on proof failure
+            setCurrentSessionToken(undefined);
             throw new RbxError(
               "RBX.AUTH.PROOF_FAILED",
               "PROOF challenge failed — invalid HMAC or expired challenge",
@@ -506,6 +511,7 @@ export function startBridgeServer(
             connectedAt: Date.now(),
             lastPollAt: Date.now(),
           };
+          setCurrentSessionToken(activeSession.token);
           sendJson(request, response, 200, {
             ok: true,
             session_id: activeSession.id,
@@ -616,6 +622,10 @@ export function startBridgeServer(
           }
           const pairingSecret = await pairingService.loadOrCreatePairingSecret();
           if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+            // F10: a refresh failure invalidates trust in the current credential state.
+            // Clear registry BEFORE the throw so subsequent MCP-side requests get
+            // RBX.AUTH.MISSING_TOKEN rather than continuing with a stale token.
+            setCurrentSessionToken(undefined);
             throw new RbxError(
               "RBX.AUTH.PROOF_FAILED",
               "Refresh PROOF failed — pairing_secret mismatch or expired challenge",
@@ -628,11 +638,14 @@ export function startBridgeServer(
           // F11-followup (review item 11): revoke ALL session tokens before issuing new one.
           // Single-instance scope: only one paired plugin at a time, so stale tokens left over
           // from prior pair attempts are NOT desirable. Refresh = reset.
+          // F10: clear registry before revoking stale tokens
+          setCurrentSessionToken(undefined);
           pairingService.revokeAllSessionTokens();
           const fresh = pairingService.issueSessionToken();
           if (activeSession) {
             activeSession.token = fresh.token;
           }
+          setCurrentSessionToken(fresh.token);
           sendJson(request, response, 200, {
             ok: true,
             session_token: fresh.token,
@@ -649,17 +662,31 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/studio/poll") {
-        const token = getSingleQueryValue(url.searchParams.get("token") ?? undefined);
-        if (!requireToken(token)) {
-          sendError(request, response, 401, "Invalid session token");
-          return;
+        // Capture the token at poll entry so the long-poll waiter can detect
+        // session replacement (re-pair, refresh, revoke) and bail out instead
+        // of delivering commands meant for the old plugin connection.
+        let boundToken: string;
+        try {
+          const auth = requireAuth(request, pairingService);
+          if (!activeSession || activeSession.token !== auth.token) {
+            throw new RbxError(
+              "RBX.AUTH.SESSION_REVOKED",
+              "Session token not bound to active plugin connection",
+              false,
+              undefined,
+              "Plugin must re-run /studio/connect",
+              401,
+            );
+          }
+          activeSession.lastPollAt = Date.now();
+          boundToken = auth.token;
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
         }
-        const session = activeSession;
-        if (!session) {
-          sendError(request, response, 401, "Invalid session token");
-          return;
-        }
-        session.lastPollAt = Date.now();
         const next = queuedCommands.shift();
         if (next) {
           sendJson(request, response, 200, {
@@ -673,13 +700,28 @@ export function startBridgeServer(
           response,
           request,
           interval: setInterval(() => {
-            if (!requireToken(token) || response.writableEnded || response.destroyed || stopping) {
+            const sessionMismatch = !activeSession || activeSession.token !== boundToken;
+            if (sessionMismatch || response.writableEnded || response.destroyed || stopping) {
               clearInterval(waiter.interval);
               clearTimeout(waiter.timeout);
               pollWaiters.delete(waiter);
               if (!response.writableEnded) {
-                if (!requireToken(token)) {
-                  sendError(request, response, 401, "Invalid session token");
+                if (sessionMismatch) {
+                  // activeSession is null OR was replaced by a new pair/refresh.
+                  // Either way: don't deliver commands for a stale plugin connection.
+                  sendErrorEnvelope(
+                    request,
+                    response,
+                    new RbxError(
+                      "RBX.AUTH.SESSION_REVOKED",
+                      "Session ended or replaced during long-poll",
+                      false,
+                      undefined,
+                      "Reconnect",
+                      401,
+                    ),
+                    randomUUID(),
+                  );
                 } else {
                   sendJson(request, response, 200, { command: null });
                 }
@@ -724,14 +766,28 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/studio/response") {
+        try {
+          const auth = requireAuth(request, pairingService);
+          if (!activeSession || activeSession.token !== auth.token) {
+            throw new RbxError(
+              "RBX.AUTH.SESSION_REVOKED",
+              "Session token not bound to active plugin connection",
+              false,
+              undefined,
+              "Plugin must re-run /studio/connect",
+              401,
+            );
+          }
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         const body = await readJsonBody(request);
         if (!isRecord(body)) {
           sendError(request, response, 400, "Request body must be a JSON object");
-          return;
-        }
-        const token = asString(body["token"]);
-        if (!requireToken(token)) {
-          sendError(request, response, 401, "Invalid session token");
           return;
         }
         const commandId = asString(body["commandId"]);
@@ -764,6 +820,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/datamodel") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -780,6 +845,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/search") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -790,6 +864,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/screenshot") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -800,6 +883,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/tests/run") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -810,6 +902,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname.startsWith("/api/tests/results/")) {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -824,6 +925,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/patch") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -834,6 +944,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/patch/undo") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -844,6 +963,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/execute") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -854,6 +982,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/script/source") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -868,6 +1005,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/script/source") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -883,6 +1029,15 @@ export function startBridgeServer(
         pathname.endsWith("/properties") &&
         pathname !== "/api/instance/properties"
       ) {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -899,6 +1054,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/instance/properties") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -913,6 +1077,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/instance/create") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -923,6 +1096,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/instance/delete") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -933,6 +1115,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/instance/clone") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -943,6 +1134,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/instance/move") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -953,6 +1153,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/instance/set-property") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -963,6 +1172,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/instance/children") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -977,6 +1195,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/selection") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -986,6 +1213,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/tags") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -996,6 +1232,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/attributes") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1006,6 +1251,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/playtest/start") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1016,6 +1270,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/playtest/stop") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1025,6 +1288,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/output") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1037,6 +1309,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/teleport-graph") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1046,6 +1327,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "GET" && pathname === "/api/packages") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1055,6 +1345,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/ui/build") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1065,6 +1364,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/lighting/apply") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1075,6 +1383,15 @@ export function startBridgeServer(
       }
 
       if (request.method === "POST" && pathname === "/api/terrain/generate") {
+        try {
+          requireAuth(request, pairingService);
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         if (!requirePluginSession(request, response)) {
           return;
         }
@@ -1103,11 +1420,14 @@ export function startBridgeServer(
     server.once("error", reject);
     server.listen(port, "127.0.0.1", () => {
       server.removeListener("error", reject);
+      const addr = server.address();
+      const boundPort = addr !== null && typeof addr === "object" ? addr.port : port;
       resolve({
-        port,
+        port: boundPort,
         stop: () => {
           stopping = true;
           activeSession = null;
+          setCurrentSessionToken(undefined);
           for (const waiter of pollWaiters) {
             clearInterval(waiter.interval);
             clearTimeout(waiter.timeout);

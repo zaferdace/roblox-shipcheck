@@ -1638,9 +1638,11 @@ local function sendResponse(commandId, success, result)
 		HttpService:RequestAsync({
 			Url = buildUrl("/studio/response"),
 			Method = "POST",
-			Headers = { ["Content-Type"] = "application/json" },
+			Headers = {
+				["Content-Type"] = "application/json",
+				["Authorization"] = "Bearer " .. sessionToken,
+			},
 			Body = HttpService:JSONEncode({
-				token = sessionToken,
 				commandId = commandId,
 				result = success and result or nil,
 				error = (not success) and tostring(result) or nil,
@@ -1731,9 +1733,11 @@ local function startPolling()
 		while connected and running do
 			local ok, response = pcall(function()
 				return HttpService:RequestAsync({
-					Url = buildUrl("/studio/poll?token=" .. sessionToken),
+					Url = buildUrl("/studio/poll"),
 					Method = "GET",
-					Headers = {},
+					Headers = {
+						["Authorization"] = "Bearer " .. sessionToken,
+					},
 				})
 			end)
 

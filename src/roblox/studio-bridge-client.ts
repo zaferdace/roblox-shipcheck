@@ -1,3 +1,4 @@
+import { getCurrentSessionToken } from "../bridge/session-registry.js";
 import type {
   InstanceNode,
   Patch,
@@ -259,14 +260,20 @@ export class StudioBridgeClient {
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
     const url = `http://${this.host}:${this.port}${route}`;
     try {
+      const headers: Record<string, string> = {};
+      const sessionToken = getCurrentSessionToken();
+      if (sessionToken) {
+        headers["authorization"] = `Bearer ${sessionToken}`;
+      }
+      if (options?.body !== undefined) {
+        headers["content-type"] = "application/json";
+      }
       const requestInit: RequestInit = {
         method: options?.method ?? "GET",
         signal: controller.signal,
+        headers,
       };
       if (options?.body !== undefined) {
-        requestInit.headers = {
-          "content-type": "application/json",
-        };
         requestInit.body = JSON.stringify(options.body);
       }
       const response = await fetch(url, requestInit);
