@@ -1927,5 +1927,41 @@ end)
 
 plugin.Unloading:Connect(function()
 	running = false
+	local sessionToken = getSetting(SETTING_SESSION_TOKEN)
+	if sessionToken then
+		-- Best-effort signal to bridge: plugin_unloading enters reload_grace (retryable).
+		-- studio_quitting is signalled via BindToClose below.
+		pcall(function()
+			HttpService:RequestAsync({
+				Url = buildUrl("/studio/disconnect"),
+				Method = "POST",
+				Headers = {
+					["Content-Type"] = "application/json",
+					["Authorization"] = "Bearer " .. sessionToken,
+				},
+				Body = HttpService:JSONEncode({ reason = "plugin_unloading" }),
+			})
+		end)
+	end
 	disconnect()
+end)
+
+-- BindToClose fires when Studio is about to close. Best-effort: send
+-- studio_quitting signal so bridge knows this is a non-retryable terminal,
+-- not a plugin reload.
+game:BindToClose(function()
+	local sessionToken = getSetting(SETTING_SESSION_TOKEN)
+	if sessionToken then
+		pcall(function()
+			HttpService:RequestAsync({
+				Url = buildUrl("/studio/disconnect"),
+				Method = "POST",
+				Headers = {
+					["Content-Type"] = "application/json",
+					["Authorization"] = "Bearer " .. sessionToken,
+				},
+				Body = HttpService:JSONEncode({ reason = "studio_quitting" }),
+			})
+		end)
+	end
 end)

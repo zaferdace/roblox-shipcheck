@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
 import { RbxError, tryCatchHandler } from "./errors.js";
+import { SessionLifecycle } from "./lifecycle.js";
 import { PairingService } from "./pairing.js";
 import { setCurrentSessionToken } from "./session-registry.js";
 import { checkVersionCompat } from "./version-check.js";
@@ -44,13 +45,6 @@ interface PendingCommand {
   createdAt: number;
 }
 
-interface PluginSession {
-  id: string;
-  token: string;
-  connectedAt: number;
-  lastPollAt: number;
-}
-
 interface QueuedCommand extends PendingCommand {
   timeout: NodeJS.Timeout;
 }
@@ -62,6 +56,7 @@ const POLL_WAIT_MS = 25_000;
 const POLL_CHECK_MS = 100;
 const COMMAND_TIMEOUT_MS = 30_000;
 const MAX_BODY_SIZE = 10 * 1024 * 1024;
+const HEARTBEAT_INTERVAL_MS = 5_000;
 
 function withCorsHeaders(request: IncomingMessage, response: ServerResponse): void {
   const origin = request.headers.origin;
@@ -224,7 +219,7 @@ export function startBridgeServer(
 ): Promise<{ port: number; stop: () => void }> {
   const port = options.port ?? DEFAULT_PORT;
   const pairingService = options.pairingService;
-  let activeSession: PluginSession | null = null;
+  const lifecycle = new SessionLifecycle();
   const queuedCommands: QueuedCommand[] = [];
   const commandsById = new Map<string, QueuedCommand>();
   const pollWaiters = new Set<{
@@ -249,6 +244,12 @@ export function startBridgeServer(
     return command;
   };
 
+  const requirePluginSession = (): void => {
+    if (lifecycle.state() !== "active") {
+      throw lifecycle.commandError();
+    }
+  };
+
   const flushPollWaiters = (): void => {
     if (queuedCommands.length === 0) {
       return;
@@ -267,9 +268,7 @@ export function startBridgeServer(
       clearInterval(waiter.interval);
       clearTimeout(waiter.timeout);
       pollWaiters.delete(waiter);
-      if (activeSession) {
-        activeSession.lastPollAt = Date.now();
-      }
+      lifecycle.heartbeat();
       sendJson(waiter.request, waiter.response, 200, {
         id: next.id,
         command: next.command,
@@ -305,6 +304,42 @@ export function startBridgeServer(
       commandsById.set(entry.id, entry);
       flushPollWaiters();
     });
+
+  // F8: 5-second heartbeat timer ticks the lifecycle and rejects in-flight commands on terminal expiry.
+  // Snapshot the error BEFORE tick() transitions state to idle so commands get the correct error code.
+  const heartbeatInterval = setInterval(() => {
+    const prevState = lifecycle.state();
+    let expiryError: RbxError | undefined;
+    if (prevState === "reload_grace") {
+      expiryError = new RbxError(
+        "RBX.PLUGIN.RELOAD_TIMEOUT",
+        "Plugin reload grace window exceeded; session terminated",
+        false,
+        undefined,
+        "Restart the plugin in Studio and reconnect",
+        503,
+      );
+    } else if (prevState === "quitting") {
+      expiryError = new RbxError(
+        "RBX.STUDIO.QUITTING",
+        "Studio quit; in-flight commands rejected",
+        false,
+        undefined,
+        "Reopen Studio and reconnect",
+        503,
+      );
+    }
+    lifecycle.tick();
+    if (prevState !== "idle" && lifecycle.state() === "idle") {
+      if (expiryError) {
+        for (const cmd of [...commandsById.values()]) {
+          cleanupCommand(cmd.id);
+          cmd.reject(expiryError);
+        }
+      }
+      setCurrentSessionToken(undefined);
+    }
+  }, HEARTBEAT_INTERVAL_MS);
 
   const server = createServer(async (request, response) => {
     const requestId = randomUUID();
@@ -391,9 +426,8 @@ export function startBridgeServer(
           );
         }
         // F10: clobber existing session on re-pair
-        if (activeSession) {
-          pairingService.revokeSessionToken(activeSession.token);
-          activeSession = null;
+        if (lifecycle.session()) {
+          pairingService.revokeSessionToken(lifecycle.session()!.token);
           setCurrentSessionToken(undefined);
         }
         const pairingSecret = await pairingService.loadOrCreatePairingSecret();
@@ -506,16 +540,12 @@ export function startBridgeServer(
             401,
           );
         }
-        activeSession = {
-          id: randomUUID(),
-          token: tokenStatus.token,
-          connectedAt: Date.now(),
-          lastPollAt: Date.now(),
-        };
-        setCurrentSessionToken(activeSession.token);
+        const sessionId = randomUUID();
+        lifecycle.attach({ id: sessionId, token: tokenStatus.token, connectedAt: Date.now() });
+        setCurrentSessionToken(tokenStatus.token);
         sendJson(req, res, 200, {
           ok: true,
-          session_id: activeSession.id,
+          session_id: sessionId,
         });
         flushPollWaiters();
         return;
@@ -627,8 +657,10 @@ export function startBridgeServer(
         setCurrentSessionToken(undefined);
         pairingService.revokeAllSessionTokens();
         const fresh = pairingService.issueSessionToken();
-        if (activeSession) {
-          activeSession.token = fresh.token;
+        // Update the session token in the lifecycle if there's an active session
+        const currentSession = lifecycle.session();
+        if (currentSession) {
+          lifecycle.attach({ ...currentSession, token: fresh.token });
         }
         setCurrentSessionToken(fresh.token);
         sendJson(req, res, 200, {
@@ -644,7 +676,7 @@ export function startBridgeServer(
         // session replacement (re-pair, refresh, revoke) and bail out instead
         // of delivering commands meant for the old plugin connection.
         const auth = requireAuth(req, pairingService);
-        if (!activeSession || activeSession.token !== auth.token) {
+        if (lifecycle.state() !== "active" || lifecycle.session()?.token !== auth.token) {
           throw new RbxError(
             "RBX.AUTH.SESSION_REVOKED",
             "Session token not bound to active plugin connection",
@@ -654,7 +686,24 @@ export function startBridgeServer(
             401,
           );
         }
-        activeSession.lastPollAt = Date.now();
+        const heartbeatResult = lifecycle.heartbeat();
+        // F18: plugin reattached during grace — commands queued targeted the
+        // pre-reload context. Reject them so caller retries against fresh state.
+        if (heartbeatResult.reconnected) {
+          for (const cmd of [...commandsById.values()]) {
+            cleanupCommand(cmd.id);
+            cmd.reject(
+              new RbxError(
+                "RBX.PLUGIN.RECONNECTED",
+                "Plugin reconnected after grace; queued commands invalidated for state consistency",
+                true,
+                undefined,
+                "Retry the original tool call — fresh plugin context now active",
+                503,
+              ),
+            );
+          }
+        }
         const boundToken = auth.token;
         const next = queuedCommands.shift();
         if (next) {
@@ -669,14 +718,15 @@ export function startBridgeServer(
           response: res,
           request: req,
           interval: setInterval(() => {
-            const sessionMismatch = !activeSession || activeSession.token !== boundToken;
+            const sessionMismatch =
+              lifecycle.state() !== "active" || lifecycle.session()?.token !== boundToken;
             if (sessionMismatch || res.writableEnded || res.destroyed || stopping) {
               clearInterval(waiter.interval);
               clearTimeout(waiter.timeout);
               pollWaiters.delete(waiter);
               if (!res.writableEnded) {
                 if (sessionMismatch) {
-                  // activeSession is null OR was replaced by a new pair/refresh.
+                  // lifecycle is not active OR token was replaced by a new pair/refresh.
                   // Either way: don't deliver commands for a stale plugin connection.
                   sendJson(req, res, 401, {
                     ok: false,
@@ -701,10 +751,7 @@ export function startBridgeServer(
             if (!command) {
               return;
             }
-            const currentSession = activeSession;
-            if (currentSession) {
-              currentSession.lastPollAt = Date.now();
-            }
+            lifecycle.heartbeat();
             clearInterval(waiter.interval);
             clearTimeout(waiter.timeout);
             pollWaiters.delete(waiter);
@@ -733,7 +780,7 @@ export function startBridgeServer(
 
       if (req.method === "POST" && pathname === "/studio/response") {
         const auth = requireAuth(req, pairingService);
-        if (!activeSession || activeSession.token !== auth.token) {
+        if (lifecycle.session()?.token !== auth.token) {
           throw new RbxError(
             "RBX.AUTH.SESSION_REVOKED",
             "Session token not bound to active plugin connection",
@@ -786,27 +833,45 @@ export function startBridgeServer(
         return;
       }
 
+      // POST /studio/disconnect { reason: "studio_quitting" | "plugin_unloading" }
+      // Plugin POSTs this on Unloading or BindToClose (F9).
+      if (req.method === "POST" && pathname === "/studio/disconnect") {
+        const auth = requireAuth(req, pairingService);
+        if (lifecycle.session()?.token !== auth.token) {
+          throw new RbxError(
+            "RBX.AUTH.SESSION_REVOKED",
+            "Session token not bound to active plugin connection",
+            false,
+            undefined,
+            "Plugin must re-run /studio/connect",
+            401,
+          );
+        }
+        const body = await readJsonBody(req);
+        const reason = isRecord(body) ? asString(body["reason"]) : undefined;
+        if (reason === "studio_quitting") {
+          // F9: non-retryable terminal — Studio is closing
+          lifecycle.markQuitting();
+        } else if (reason === "plugin_unloading") {
+          // F9: immediately enter reload_grace so subsequent /api/* gets RELOADING
+          lifecycle.markReloading();
+        }
+        sendJson(req, res, 200, { ok: true });
+        return;
+      }
+
       if (req.method === "GET" && pathname === "/api/ping") {
         sendJson(req, res, 200, {
           ok: true,
           version: SERVER_VERSION,
-          plugin_connected: activeSession !== null,
+          plugin_connected: lifecycle.state() === "active",
         });
         return;
       }
 
       if (req.method === "GET" && pathname === "/api/datamodel") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const params = {
           max_depth: coerceInteger(url.searchParams.get("max_depth") ?? undefined),
           root_path: url.searchParams.get("root_path") ?? undefined,
@@ -822,16 +887,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/search") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("search", body);
         sendJson(req, res, 200, result);
         return;
@@ -839,16 +895,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/screenshot") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const viewport = url.searchParams.get("viewport") ?? "game";
         const result = await enqueueCommand("get_screenshot", { viewport });
         sendJson(req, res, 200, result);
@@ -858,16 +905,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/tests/run") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("run_tests", body);
         sendJson(req, res, 200, result);
         return;
@@ -875,16 +913,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname.startsWith("/api/tests/results/")) {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const runId = decodeURIComponent(pathname.slice("/api/tests/results/".length));
         if (!runId) {
           throw new RbxError(
@@ -904,16 +933,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/patch") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("apply_patch", body);
         sendJson(req, res, 200, result);
         return;
@@ -922,16 +942,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/patch/undo") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("undo_patch", body);
         sendJson(req, res, 200, result);
         return;
@@ -940,16 +951,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/execute") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("execute_code", body);
         sendJson(req, res, 200, result);
         return;
@@ -957,16 +959,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/script/source") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const path = url.searchParams.get("path") ?? undefined;
         if (!path) {
           throw new RbxError(
@@ -986,16 +979,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/script/source") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("set_script_source", body);
         sendJson(req, res, 200, result);
         return;
@@ -1008,16 +992,7 @@ export function startBridgeServer(
         pathname !== "/api/instance/properties"
       ) {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const instanceId = decodeURIComponent(
           pathname.slice("/api/instance/".length, -"/properties".length),
         );
@@ -1038,16 +1013,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/instance/properties") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const path = url.searchParams.get("path") ?? undefined;
         if (!path) {
           throw new RbxError(
@@ -1067,16 +1033,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/instance/create") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("create_instance", body);
         sendJson(req, res, 200, result);
         return;
@@ -1085,16 +1042,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/instance/delete") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("delete_instance", body);
         sendJson(req, res, 200, result);
         return;
@@ -1103,16 +1051,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/instance/clone") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("clone_instance", body);
         sendJson(req, res, 200, result);
         return;
@@ -1121,16 +1060,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/instance/move") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("move_instance", body);
         sendJson(req, res, 200, result);
         return;
@@ -1139,16 +1069,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/instance/set-property") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("set_instance_property", body);
         sendJson(req, res, 200, result);
         return;
@@ -1156,16 +1077,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/instance/children") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const path = url.searchParams.get("path") ?? undefined;
         const depth = coerceInteger(url.searchParams.get("depth") ?? undefined);
         const result = await enqueueCommand("get_children", {
@@ -1178,16 +1090,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/selection") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("get_selection", {});
         sendJson(req, res, 200, result);
         return;
@@ -1196,16 +1099,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/tags") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("manage_tags", body);
         sendJson(req, res, 200, result);
         return;
@@ -1214,16 +1108,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/attributes") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("manage_attributes", body);
         sendJson(req, res, 200, result);
         return;
@@ -1232,16 +1117,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/playtest/start") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("start_playtest", body);
         sendJson(req, res, 200, result);
         return;
@@ -1249,16 +1125,7 @@ export function startBridgeServer(
 
       if (req.method === "POST" && pathname === "/api/playtest/stop") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("stop_playtest", {});
         sendJson(req, res, 200, result);
         return;
@@ -1266,16 +1133,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/output") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const limit = coerceInteger(url.searchParams.get("limit") ?? undefined);
         const result = await enqueueCommand("get_output", {
           ...(limit !== undefined ? { limit } : {}),
@@ -1286,16 +1144,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/teleport-graph") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("teleport_graph", {});
         sendJson(req, res, 200, result);
         return;
@@ -1303,16 +1152,7 @@ export function startBridgeServer(
 
       if (req.method === "GET" && pathname === "/api/packages") {
         requireAuth(req, pairingService);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("package_info", {});
         sendJson(req, res, 200, result);
         return;
@@ -1321,16 +1161,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/ui/build") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("build_ui", body);
         sendJson(req, res, 200, result);
         return;
@@ -1339,16 +1170,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/lighting/apply") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("apply_lighting", body);
         sendJson(req, res, 200, result);
         return;
@@ -1357,16 +1179,7 @@ export function startBridgeServer(
       if (req.method === "POST" && pathname === "/api/terrain/generate") {
         requireAuth(req, pairingService);
         const body = await readJsonBody(req);
-        if (activeSession === null) {
-          throw new RbxError(
-            "RBX.PLUGIN.NOT_CONNECTED",
-            "Roblox Studio plugin is not connected",
-            true,
-            undefined,
-            "Open Roblox Studio and click 'Toggle Connection' in the plugin toolbar",
-            503,
-          );
-        }
+        requirePluginSession();
         const result = await enqueueCommand("terrain_generate", body);
         sendJson(req, res, 200, result);
         return;
@@ -1392,9 +1205,11 @@ export function startBridgeServer(
       resolve({
         port: boundPort,
         stop: () => {
+          clearInterval(heartbeatInterval);
           stopping = true;
-          activeSession = null;
           setCurrentSessionToken(undefined);
+          lifecycle.markQuitting();
+          lifecycle.tick();
           for (const waiter of pollWaiters) {
             clearInterval(waiter.interval);
             clearTimeout(waiter.timeout);
