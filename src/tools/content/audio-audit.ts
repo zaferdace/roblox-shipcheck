@@ -34,8 +34,15 @@ function getPath(node: InstanceNode, parentPath?: string): string {
 function classifySound(name: string): keyof SoundCoverage {
   const lower = name.toLowerCase();
   if (lower.includes("music") || lower.includes("bgm") || lower.includes("theme")) return "music";
-  if (lower.includes("ambient") || lower.includes("env") || lower.includes("atmo")) return "ambient";
-  if (lower.includes("ui") || lower.includes("click") || lower.includes("button") || lower.includes("menu")) return "ui";
+  if (lower.includes("ambient") || lower.includes("env") || lower.includes("atmo"))
+    return "ambient";
+  if (
+    lower.includes("ui") ||
+    lower.includes("click") ||
+    lower.includes("button") ||
+    lower.includes("menu")
+  )
+    return "ui";
   return "sfx";
 }
 
@@ -83,8 +90,7 @@ registerTool({
         typeof props["RollOffMinDistance"] === "number" ? props["RollOffMinDistance"] : null;
       const rollOffMax =
         typeof props["RollOffMaxDistance"] === "number" ? props["RollOffMaxDistance"] : null;
-      const soundGroup =
-        typeof props["SoundGroup"] === "string" ? props["SoundGroup"] : null;
+      const soundGroup = typeof props["SoundGroup"] === "string" ? props["SoundGroup"] : null;
 
       const category = classifySound(node.name);
       coverage[category]++;
@@ -159,7 +165,8 @@ registerTool({
           rule: "no_sound_group",
           message: `Sound "${path}" is not assigned to a SoundGroup.`,
           path,
-          suggestion: "Assign sounds to SoundGroups (Music, SFX, Ambient) for volume mixing control.",
+          suggestion:
+            "Assign sounds to SoundGroups (Music, SFX, Ambient) for volume mixing control.",
         });
       }
     }

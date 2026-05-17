@@ -46,7 +46,9 @@ export async function runLootTableAudit(
     case_sensitive: false,
     max_results: 100,
   });
-  const dropTableArray: StudioSearchMatch[] = Array.isArray(dropTableMatches) ? dropTableMatches : [];
+  const dropTableArray: StudioSearchMatch[] = Array.isArray(dropTableMatches)
+    ? dropTableMatches
+    : [];
 
   const dropScriptMatches = await client.searchInstances({
     query: "LootTable",
@@ -54,7 +56,9 @@ export async function runLootTableAudit(
     case_sensitive: false,
     max_results: 50,
   });
-  const dropScriptArray: StudioSearchMatch[] = Array.isArray(dropScriptMatches) ? dropScriptMatches : [];
+  const dropScriptArray: StudioSearchMatch[] = Array.isArray(dropScriptMatches)
+    ? dropScriptMatches
+    : [];
 
   const tablesFound = lootArray.length + dropTableArray.length + dropScriptArray.length;
 
@@ -88,7 +92,9 @@ export async function runLootTableAudit(
     case_sensitive: false,
     max_results: 100,
   });
-  const legendaryArray: StudioSearchMatch[] = Array.isArray(legendaryMatches) ? legendaryMatches : [];
+  const legendaryArray: StudioSearchMatch[] = Array.isArray(legendaryMatches)
+    ? legendaryMatches
+    : [];
 
   const totalRarityItems =
     commonArray.length + rareArray.length + epicArray.length + legendaryArray.length;
@@ -160,7 +166,8 @@ export async function runLootTableAudit(
       element_path: "ServerScriptService",
       rule: "no_common_items",
       message: "No Common rarity items detected — players may find nothing from most drops.",
-      suggestion: "Add Common-tier items as the baseline drop to ensure players always receive something.",
+      suggestion:
+        "Add Common-tier items as the baseline drop to ensure players always receive something.",
     });
   }
 

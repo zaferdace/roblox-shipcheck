@@ -231,7 +231,15 @@ end
 return CheckpointSystem`,
   },
   round_manager: {
-    api: ["startRound", "endRound", "getState", "getTimer", "addPlayer", "removePlayer", "getPlayers"],
+    api: [
+      "startRound",
+      "endRound",
+      "getState",
+      "getTimer",
+      "addPlayer",
+      "removePlayer",
+      "getPlayers",
+    ],
     source: `local RoundManager = {}
 RoundManager.__index = RoundManager
 
@@ -545,7 +553,14 @@ end
 return DialogueSystem`,
   },
   abilities: {
-    api: ["activate", "canUse", "getCooldownRemaining", "resetCooldown", "getAbilities", "addAbility"],
+    api: [
+      "activate",
+      "canUse",
+      "getCooldownRemaining",
+      "resetCooldown",
+      "getAbilities",
+      "addAbility",
+    ],
     source: `local AbilitySystem = {}
 AbilitySystem.__index = AbilitySystem
 
@@ -640,16 +655,14 @@ registerTool({
     if (!template) {
       throw new Error(`Unknown system_type: ${input.system_type}`);
     }
-    const moduleName = input.system_name ?? input.system_type
-      .split("_")
-      .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-      .join("");
+    const moduleName =
+      input.system_name ??
+      input.system_type
+        .split("_")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join("");
 
-    await client.createInstance(
-      "ServerScriptService",
-      "ModuleScript",
-      moduleName,
-    );
+    await client.createInstance("ServerScriptService", "ModuleScript", moduleName);
     const createdPath = `ServerScriptService.${moduleName}`;
     await client.setScriptSource(createdPath, template.source);
 

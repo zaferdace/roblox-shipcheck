@@ -52,8 +52,8 @@ export async function runIdleEarningsCheck(
   const timePatternsFound = osTimeArray.length + tickArray.length + dateTimeArray.length;
 
   const allTimeMatches = [...osTimeArray, ...tickArray, ...dateTimeArray];
-  const localScriptTimeMatches = allTimeMatches.filter((m) =>
-    m.path.toLowerCase().includes("local") || m.path.toLowerCase().includes("client"),
+  const localScriptTimeMatches = allTimeMatches.filter(
+    (m) => m.path.toLowerCase().includes("local") || m.path.toLowerCase().includes("client"),
   );
   const clientSideTimeReliance = localScriptTimeMatches.length > 0;
 
@@ -76,7 +76,9 @@ export async function runIdleEarningsCheck(
   const dsTimeArray: StudioSearchMatch[] = Array.isArray(dsTimeMatches) ? dsTimeMatches : [];
   const serverSideValidation =
     serverValidationArray.length > 0 &&
-    dsTimeArray.some((m) => !m.path.toLowerCase().includes("local") && !m.path.toLowerCase().includes("client"));
+    dsTimeArray.some(
+      (m) => !m.path.toLowerCase().includes("local") && !m.path.toLowerCase().includes("client"),
+    );
 
   if (clientSideTimeReliance) {
     issues.push({
@@ -95,7 +97,8 @@ export async function runIdleEarningsCheck(
       element_path: "ServerScriptService",
       rule: "no_server_time_validation",
       message: "No server-side time validation detected for idle earnings.",
-      suggestion: "Validate elapsed time on the server using os.time() stored in DataStore on session start.",
+      suggestion:
+        "Validate elapsed time on the server using os.time() stored in DataStore on session start.",
     });
   }
 
@@ -105,7 +108,8 @@ export async function runIdleEarningsCheck(
       element_path: "ServerScriptService",
       rule: "no_idle_earnings_system",
       message: "No time-based patterns detected — idle/offline earnings may not be implemented.",
-      suggestion: "Consider adding offline earnings using server-side os.time() delta calculations.",
+      suggestion:
+        "Consider adding offline earnings using server-side os.time() delta calculations.",
     });
   }
 
@@ -122,7 +126,8 @@ export async function runIdleEarningsCheck(
 
 registerTool({
   name: "rbx_tycoon_idle_earnings_check",
-  description: "Check offline/idle earnings implementation for exploits and time-manipulation safety",
+  description:
+    "Check offline/idle earnings implementation for exploits and time-manipulation safety",
   schema,
   handler: runIdleEarningsCheck,
 });

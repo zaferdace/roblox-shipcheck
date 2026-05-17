@@ -96,7 +96,8 @@ export async function runPlotSystemAudit(
       element_path: "Workspace",
       rule: "no_owner_tracking",
       message: "Plots found but no Owner value instances detected.",
-      suggestion: "Add a StringValue or ObjectValue named 'Owner' inside each plot to track ownership.",
+      suggestion:
+        "Add a StringValue or ObjectValue named 'Owner' inside each plot to track ownership.",
     });
   }
 

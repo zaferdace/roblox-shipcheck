@@ -4,7 +4,16 @@ import { createResponseEnvelope, escapeLuaString, sourceInfo } from "../../share
 import { registerTool } from "../registry.js";
 
 const schema = z.object({
-  prefab_type: z.enum(["chest", "door", "turret", "trap", "pickup", "checkpoint", "vendor", "portal"]),
+  prefab_type: z.enum([
+    "chest",
+    "door",
+    "turret",
+    "trap",
+    "pickup",
+    "checkpoint",
+    "vendor",
+    "portal",
+  ]),
   prefab_name: z.string().optional(),
   position: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
   parent_path: z.string().default("Workspace"),
@@ -336,7 +345,9 @@ registerTool({
   handler: async (input) => {
     const client = new StudioBridgeClient({ port: input.studio_port });
 
-    const name = input.prefab_name ?? `${input.prefab_type.charAt(0).toUpperCase()}${input.prefab_type.slice(1)}_Prefab`;
+    const name =
+      input.prefab_name ??
+      `${input.prefab_type.charAt(0).toUpperCase()}${input.prefab_type.slice(1)}_Prefab`;
     const pos = input.position ?? { x: 0, y: 5, z: 0 };
 
     const lua = buildPrefabLua(input.prefab_type, name, input.parent_path, pos);

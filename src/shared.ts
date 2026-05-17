@@ -316,7 +316,12 @@ export function sha256(input: string): string {
 }
 
 export function escapeLuaString(str: string): string {
-  return str.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\0/g, "");
+  return str
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\0/g, "");
 }
 
 export function scoreFromIssues(issues: AuditIssue[]): number {

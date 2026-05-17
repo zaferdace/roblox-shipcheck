@@ -42,7 +42,9 @@ export async function runQuestSystemAudit(
     case_sensitive: false,
     max_results: 100,
   });
-  const questScriptArray: StudioSearchMatch[] = Array.isArray(questScriptMatches) ? questScriptMatches : [];
+  const questScriptArray: StudioSearchMatch[] = Array.isArray(questScriptMatches)
+    ? questScriptMatches
+    : [];
 
   const questsFound = questArray.length + questScriptArray.length;
 
@@ -60,7 +62,9 @@ export async function runQuestSystemAudit(
     case_sensitive: false,
     max_results: 30,
   });
-  const rewardScriptArray: StudioSearchMatch[] = Array.isArray(rewardScriptMatches) ? rewardScriptMatches : [];
+  const rewardScriptArray: StudioSearchMatch[] = Array.isArray(rewardScriptMatches)
+    ? rewardScriptMatches
+    : [];
 
   const totalRewards = rewardArray.length + rewardScriptArray.length;
 
@@ -92,7 +96,9 @@ export async function runQuestSystemAudit(
     case_sensitive: false,
     max_results: 30,
   });
-  const nextQuestArray: StudioSearchMatch[] = Array.isArray(nextQuestMatches) ? nextQuestMatches : [];
+  const nextQuestArray: StudioSearchMatch[] = Array.isArray(nextQuestMatches)
+    ? nextQuestMatches
+    : [];
 
   const chainCompleteMatches = await client.searchInstances({
     query: "QuestComplete",
@@ -100,7 +106,9 @@ export async function runQuestSystemAudit(
     case_sensitive: false,
     max_results: 30,
   });
-  const chainCompleteArray: StudioSearchMatch[] = Array.isArray(chainCompleteMatches) ? chainCompleteMatches : [];
+  const chainCompleteArray: StudioSearchMatch[] = Array.isArray(chainCompleteMatches)
+    ? chainCompleteMatches
+    : [];
 
   if (questsFound > 3 && nextQuestArray.length === 0 && chainCompleteArray.length === 0) {
     chainIssues.push("No quest chaining logic detected (NextQuest or QuestComplete)");
@@ -109,7 +117,8 @@ export async function runQuestSystemAudit(
       element_path: "ServerScriptService",
       rule: "no_quest_chaining",
       message: "Multiple quests found but no chain progression logic detected.",
-      suggestion: "Implement NextQuest references or QuestComplete callbacks to chain quests together.",
+      suggestion:
+        "Implement NextQuest references or QuestComplete callbacks to chain quests together.",
     });
   }
 

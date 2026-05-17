@@ -104,11 +104,7 @@ return { total_parts = totalParts }
 `;
 }
 
-function buildHubScript(
-  parent: string,
-  objectiveCount: number,
-  includeGates: boolean,
-): string {
+function buildHubScript(parent: string, objectiveCount: number, includeGates: boolean): string {
   const safeParent = escapeLuaString(parent);
   return `
 local parent = game:GetService("Workspace")

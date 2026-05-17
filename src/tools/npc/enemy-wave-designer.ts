@@ -104,9 +104,7 @@ function selectEnemiesForWave(
     return true;
   });
 
-  const tierPool = isBossWave
-    ? eligible
-    : eligible.filter((e) => e.tier !== "boss");
+  const tierPool = isBossWave ? eligible : eligible.filter((e) => e.tier !== "boss");
 
   const fallback = enemyTypes[0];
   if (tierPool.length === 0 || !fallback) return [{ name: fallback?.name ?? "Enemy", count: 1 }];
@@ -127,9 +125,7 @@ function selectEnemiesForWave(
       waveEnemies.push({ name: escort.name, count: Math.max(1, Math.floor(baseCount / 2)) });
     }
   } else {
-    const sorted = [...tierPool].sort(
-      (a, b) => TIER_WEIGHT[a.tier] - TIER_WEIGHT[b.tier],
-    );
+    const sorted = [...tierPool].sort((a, b) => TIER_WEIGHT[a.tier] - TIER_WEIGHT[b.tier]);
     const primary = sorted[0];
     if (primary) {
       waveEnemies.push({ name: primary.name, count: baseCount });
@@ -310,8 +306,7 @@ print("[WaveManager] All waves complete!")
 }
 
 function estimateDuration(waves: WaveConfig[]): number {
-  const avgEnemiesPerWave =
-    waves.reduce((sum, w) => sum + w.total_enemies, 0) / waves.length;
+  const avgEnemiesPerWave = waves.reduce((sum, w) => sum + w.total_enemies, 0) / waves.length;
   const spawnTime = avgEnemiesPerWave * 0.5;
   const combatTime = avgEnemiesPerWave * 4;
   const betweenWaveTime = waves.length * 5;

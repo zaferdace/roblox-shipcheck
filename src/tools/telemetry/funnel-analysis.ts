@@ -1,15 +1,18 @@
 import { z } from "zod";
 import { StudioBridgeClient } from "../../roblox/studio-bridge-client.js";
-import { createResponseEnvelope, readScriptSource, sourceInfo, traverseInstances } from "../../shared.js";
+import {
+  createResponseEnvelope,
+  readScriptSource,
+  sourceInfo,
+  traverseInstances,
+} from "../../shared.js";
 import type { AuditIssue } from "../../shared.js";
 import type { InstanceNode } from "../../types/roblox.js";
 import type { ResponseEnvelope } from "../../types/tools.js";
 import { registerTool } from "../registry.js";
 
 const schema = z.object({
-  funnel_type: z
-    .enum(["tutorial", "shop", "quest", "onboarding", "custom"])
-    .default("tutorial"),
+  funnel_type: z.enum(["tutorial", "shop", "quest", "onboarding", "custom"]).default("tutorial"),
   studio_port: z.number().int().positive().default(33796),
 });
 
@@ -139,7 +142,8 @@ function buildIssues(
       element_path: "DataModel",
       rule: "no_analytics",
       message: "No AnalyticsService usage detected in funnel scripts.",
-      suggestion: "Instrument funnel steps with AnalyticsService:LogEvent to measure drop-off rates.",
+      suggestion:
+        "Instrument funnel steps with AnalyticsService:LogEvent to measure drop-off rates.",
     });
   }
 
@@ -164,7 +168,9 @@ function buildRecommendations(
   const recs: string[] = [];
 
   if (steps.length < 3) {
-    recs.push(`Add at least 3 explicit ${funnelType} steps to accurately measure completion rates.`);
+    recs.push(
+      `Add at least 3 explicit ${funnelType} steps to accurately measure completion rates.`,
+    );
   }
 
   if (!hasAnalytics) {
@@ -177,7 +183,9 @@ function buildRecommendations(
   }
 
   if (funnelType === "shop") {
-    recs.push("Track add-to-cart and purchase-complete separately to identify conversion bottlenecks.");
+    recs.push(
+      "Track add-to-cart and purchase-complete separately to identify conversion bottlenecks.",
+    );
   }
 
   if (steps.length > 0) {
@@ -196,7 +204,8 @@ registerTool({
     const client = new StudioBridgeClient({ port: input.studio_port });
     const root = await client.getDataModel();
 
-    const keywords: string[] = FUNNEL_KEYWORDS[input.funnel_type] ?? FUNNEL_KEYWORDS["custom"] ?? [];
+    const keywords: string[] =
+      FUNNEL_KEYWORDS[input.funnel_type] ?? FUNNEL_KEYWORDS["custom"] ?? [];
     const scripts = findFunnelScripts(root, keywords);
     const funnelSteps = extractFunnelSteps(scripts);
     const potentialDropoffs = findDropoffs(scripts);

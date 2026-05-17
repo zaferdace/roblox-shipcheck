@@ -38,10 +38,7 @@ registerTool({
 
     // Infer event names from source patterns
     const inferredEvents: string[] = [];
-    const eventPatterns = [
-      /function\s+\w+:([\w]+)\s*\(/g,
-      /RemoteEvent\s*--\s*([\w]+)/g,
-    ];
+    const eventPatterns = [/function\s+\w+:([\w]+)\s*\(/g, /RemoteEvent\s*--\s*([\w]+)/g];
     for (const pattern of eventPatterns) {
       let match: RegExpExecArray | null;
       while ((match = pattern.exec(scriptSource)) !== null) {

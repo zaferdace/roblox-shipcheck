@@ -47,7 +47,9 @@ export async function runDifficultyRamp(
     case_sensitive: false,
     max_results: 300,
   });
-  const killbrickArray: StudioSearchMatch[] = Array.isArray(killbrickMatches) ? killbrickMatches : [];
+  const killbrickArray: StudioSearchMatch[] = Array.isArray(killbrickMatches)
+    ? killbrickMatches
+    : [];
 
   const killPartMatches = await client.searchInstances({
     query: "Kill",
@@ -137,7 +139,9 @@ export async function runDifficultyRamp(
   }
 
   const killbrickDensity =
-    stagesFound > 0 ? `${(totalKillbricks / stagesFound).toFixed(2)} per stage` : `${totalKillbricks} total`;
+    stagesFound > 0
+      ? `${(totalKillbricks / stagesFound).toFixed(2)} per stage`
+      : `${totalKillbricks} total`;
 
   let difficultyCurve = "unknown";
   if (stagesFound > 10 && totalKillbricks > 0) {

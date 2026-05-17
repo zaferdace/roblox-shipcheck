@@ -68,7 +68,8 @@ export async function runMobileJumpAudit(
             element_path: match.path,
             rule: "platform_too_small_for_mobile",
             message: `Platform at ${match.path} is ${minDim.toFixed(1)} studs — below the ${input.min_platform_size_studs} stud mobile minimum.`,
-            suggestion: "Widen small platforms to at least 4 studs for comfortable mobile touch play.",
+            suggestion:
+              "Widen small platforms to at least 4 studs for comfortable mobile touch play.",
           });
         }
       }
@@ -101,7 +102,8 @@ export async function runMobileJumpAudit(
             element_path: "Workspace",
             rule: "jump_distance_too_large_for_mobile",
             message: `Gap of ${dist.toFixed(1)} studs between platforms exceeds mobile jump range of ${input.max_jump_distance_studs} studs.`,
-            suggestion: "Reduce platform gap or add intermediate stepping stones for mobile players.",
+            suggestion:
+              "Reduce platform gap or add intermediate stepping stones for mobile players.",
           });
           break;
         }
@@ -109,7 +111,8 @@ export async function runMobileJumpAudit(
     }
   }
 
-  const mobileFriendlyPct = checkedCount > 0 ? Math.round((friendlyCount / checkedCount) * 100) : 100;
+  const mobileFriendlyPct =
+    checkedCount > 0 ? Math.round((friendlyCount / checkedCount) * 100) : 100;
 
   if (mobileFriendlyPct < 80) {
     issues.push({

@@ -23,9 +23,7 @@ const schema = z.object({
     })
     .optional(),
   dialogue: z.array(z.string()).optional(),
-  spawn_position: z
-    .object({ x: z.number(), y: z.number(), z: z.number() })
-    .optional(),
+  spawn_position: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
   parent_path: z.string().default("Workspace"),
   studio_port: z.number().int().positive().default(33796),
 });
@@ -185,10 +183,6 @@ function buildNpcLua(
   const posX = spawnPos?.x ?? 0;
   const posY = spawnPos?.y ?? 5;
   const posZ = spawnPos?.z ?? 0;
-
-  const dialogueJson = dialogue
-    ? JSON.stringify(dialogue).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
-    : null;
 
   const dialogueSource = dialogue
     ? DIALOGUE_HANDLER_SOURCE.replace(

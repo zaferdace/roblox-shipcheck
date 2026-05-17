@@ -38,11 +38,7 @@ interface CollectResult {
   toolPaths: string[];
 }
 
-function collectAnimations(
-  node: InstanceNode,
-  result: CollectResult,
-  parentPath?: string,
-): void {
+function collectAnimations(node: InstanceNode, result: CollectResult, parentPath?: string): void {
   const path = getPath(node, parentPath);
 
   if (node.className === "Animation") {
@@ -93,7 +89,7 @@ registerTool({
           rule: "broken_animation_id",
           message: `Animation at "${anim.path}" has a malformed or empty AnimationId: "${anim.animationId}"`,
           path: anim.path,
-          suggestion: 'Set AnimationId to a valid rbxassetid:// value.',
+          suggestion: "Set AnimationId to a valid rbxassetid:// value.",
         });
       }
     }

@@ -39,7 +39,9 @@ export async function runCheckpointGraph(
     case_sensitive: false,
     max_results: 200,
   });
-  const checkpointArray: StudioSearchMatch[] = Array.isArray(checkpointMatches) ? checkpointMatches : [];
+  const checkpointArray: StudioSearchMatch[] = Array.isArray(checkpointMatches)
+    ? checkpointMatches
+    : [];
 
   const checkpointsFound = spawnArray.length + checkpointArray.length;
 
@@ -111,8 +113,10 @@ export async function runCheckpointGraph(
       severity: "medium",
       element_path: "ServerScriptService",
       rule: "no_checkpoint_persistence",
-      message: "No DataStore or leaderstats detected — checkpoint progress may not save between sessions.",
-      suggestion: "Save the player's latest checkpoint number to DataStore on each checkpoint touch.",
+      message:
+        "No DataStore or leaderstats detected — checkpoint progress may not save between sessions.",
+      suggestion:
+        "Save the player's latest checkpoint number to DataStore on each checkpoint touch.",
     });
   }
 

@@ -65,7 +65,8 @@ export async function runCombatStatBalance(
   });
   const defenseArray: StudioSearchMatch[] = Array.isArray(defenseMatches) ? defenseMatches : [];
 
-  const statsFound = damageArray.length + healthArray.length + defenseArray.length + humanoidArray.length;
+  const statsFound =
+    damageArray.length + healthArray.length + defenseArray.length + humanoidArray.length;
 
   const combatModuleMatches = await client.searchInstances({
     query: "CombatModule",
@@ -144,7 +145,9 @@ export async function runCombatStatBalance(
 
       if (hitsToKillLow <= 1) {
         oneShotRisk = true;
-        balanceIssues.push(`One-shot risk: ${avgDamage.toFixed(1)} avg damage vs ${minHealth} min HP`);
+        balanceIssues.push(
+          `One-shot risk: ${avgDamage.toFixed(1)} avg damage vs ${minHealth} min HP`,
+        );
         issues.push({
           severity: "high",
           element_path: damageArray[0]?.path ?? "Workspace",

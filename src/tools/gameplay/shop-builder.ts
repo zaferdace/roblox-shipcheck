@@ -31,8 +31,9 @@ registerTool({
     const shop_name_lua = escapeLuaString(shop_name);
 
     const productsLua = products
-      .map((p, i) =>
-        `  { id = "product_${i + 1}", name = "${escapeLuaString(p.name)}", price = ${p.price}, currency = "${escapeLuaString(p.currency)}", category = "${escapeLuaString(p.category ?? "General")}" }`,
+      .map(
+        (p, i) =>
+          `  { id = "product_${i + 1}", name = "${escapeLuaString(p.name)}", price = ${p.price}, currency = "${escapeLuaString(p.currency)}", category = "${escapeLuaString(p.category ?? "General")}" }`,
       )
       .join(",\n");
 
@@ -170,7 +171,7 @@ local function createProductButton(product, parent)
   local btn = Instance.new("TextButton")
   btn.Name = product.id
   btn.Text = product.name .. "\\n" .. product.price .. " " .. product.currency
-  btn.Size = ${isGrid ? 'UDim2.new(0.3, -4, 0.45, -4)' : 'UDim2.new(1, -8, 0, 60)'}
+  btn.Size = ${isGrid ? "UDim2.new(0.3, -4, 0.45, -4)" : "UDim2.new(1, -8, 0, 60)"}
   btn.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
   btn.TextColor3 = Color3.new(1, 1, 1)
   btn.Font = Enum.Font.GothamBold

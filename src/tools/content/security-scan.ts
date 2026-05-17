@@ -22,31 +22,36 @@ const DANGEROUS_PATTERNS: Array<{
     rule: "loadstring_usage",
     re: /\bloadstring\s*\(/u,
     severity: "critical",
-    suggestion: "Remove loadstring — it executes arbitrary code and is disabled in most contexts. Use ModuleScripts instead.",
+    suggestion:
+      "Remove loadstring — it executes arbitrary code and is disabled in most contexts. Use ModuleScripts instead.",
   },
   {
     rule: "require_suspicious_id",
     re: /\brequire\s*\(\s*\d{6,}/u,
     severity: "high",
-    suggestion: "Require with a numeric ID loads external modules which may be malicious. Use local ModuleScript paths.",
+    suggestion:
+      "Require with a numeric ID loads external modules which may be malicious. Use local ModuleScript paths.",
   },
   {
     rule: "getfenv_setfenv_usage",
     re: /\b(?:getfenv|setfenv)\s*\(/u,
     severity: "high",
-    suggestion: "getfenv/setfenv can manipulate execution environments. Remove unless strictly necessary.",
+    suggestion:
+      "getfenv/setfenv can manipulate execution environments. Remove unless strictly necessary.",
   },
   {
     rule: "http_dynamic_url",
     re: /HttpService\s*:\s*GetAsync\s*\(\s*(?!["']https?:\/\/[^"']+["'])/u,
     severity: "high",
-    suggestion: "HttpService:GetAsync with a dynamic URL may fetch malicious content. Use static, allowlisted URLs.",
+    suggestion:
+      "HttpService:GetAsync with a dynamic URL may fetch malicious content. Use static, allowlisted URLs.",
   },
   {
     rule: "rawset_rawget_global",
     re: /\b(?:rawset|rawget)\s*\(\s*(?:_G|shared|script\.Globals)/u,
     severity: "medium",
-    suggestion: "rawset/rawget on global tables can be used to inject code. Prefer explicit variable passing.",
+    suggestion:
+      "rawset/rawget on global tables can be used to inject code. Prefer explicit variable passing.",
   },
   {
     rule: "debug_getinfo",
@@ -190,7 +195,8 @@ registerTool({
           rule: "hidden_instance",
           message: `Instance "${path}" has ${reason} — informational, not necessarily a security issue`,
           path,
-          suggestion: "Verify this instance is intentionally non-archivable; confirm it does not conceal unexpected logic.",
+          suggestion:
+            "Verify this instance is intentionally non-archivable; confirm it does not conceal unexpected logic.",
         });
       }
     }

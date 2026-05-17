@@ -59,7 +59,9 @@ export async function runDropperBalance(
     case_sensitive: false,
     max_results: 100,
   });
-  const collectorArray: StudioSearchMatch[] = Array.isArray(collectorMatches) ? collectorMatches : [];
+  const collectorArray: StudioSearchMatch[] = Array.isArray(collectorMatches)
+    ? collectorMatches
+    : [];
 
   const droppersFound = dropperArray.length + conveyorArray.length + collectorArray.length;
   const dropperNames = [
@@ -91,7 +93,9 @@ export async function runDropperBalance(
     case_sensitive: false,
     max_results: 30,
   });
-  const costArray: StudioSearchMatch[] = Array.isArray(upgradeCostMatches) ? upgradeCostMatches : [];
+  const costArray: StudioSearchMatch[] = Array.isArray(upgradeCostMatches)
+    ? upgradeCostMatches
+    : [];
 
   let scalingType: "exponential" | "linear" | "unknown" = "unknown";
   if (costArray.length > 0) {
@@ -101,7 +105,9 @@ export async function runDropperBalance(
       case_sensitive: false,
       max_results: 10,
     });
-    const expArray: StudioSearchMatch[] = Array.isArray(exponentialMatches) ? exponentialMatches : [];
+    const expArray: StudioSearchMatch[] = Array.isArray(exponentialMatches)
+      ? exponentialMatches
+      : [];
     scalingType = expArray.length > 0 ? "exponential" : "linear";
   }
 
@@ -140,7 +146,8 @@ export async function runDropperBalance(
       element_path: "ServerScriptService",
       rule: "linear_upgrade_scaling",
       message: "Upgrade costs appear to scale linearly — this can make late-game trivial.",
-      suggestion: "Use exponential scaling (e.g. math.pow) for upgrade costs to maintain challenge.",
+      suggestion:
+        "Use exponential scaling (e.g. math.pow) for upgrade costs to maintain challenge.",
     });
   }
 
@@ -150,7 +157,9 @@ export async function runDropperBalance(
       income_analysis: {
         dropper_names: dropperNames,
         has_number_values: hasNumberValues,
-        estimated_rate: hasNumberValues ? "NumberValues present — rate data available" : "No NumberValues found",
+        estimated_rate: hasNumberValues
+          ? "NumberValues present — rate data available"
+          : "No NumberValues found",
       },
       upgrade_curve: {
         upgrades_found: upgradeArray.length,
@@ -167,7 +176,8 @@ export async function runDropperBalance(
 
 registerTool({
   name: "rbx_tycoon_dropper_balance",
-  description: "Scan for dropper/conveyor patterns, upgrade scaling indicators, and rebirth system presence",
+  description:
+    "Scan for dropper/conveyor patterns, upgrade scaling indicators, and rebirth system presence",
   schema,
   handler: runDropperBalance,
 });
