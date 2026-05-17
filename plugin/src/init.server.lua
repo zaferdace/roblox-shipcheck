@@ -5,6 +5,9 @@ local PLUGIN_VERSION = "0.2.0"
 local MAX_JSON_BREADTH = 100
 local MAX_TEST_RESULTS = 50
 
+local SETTING_PAIRING_SECRET = "rbx_shipcheck_pairing_secret"
+local SETTING_SESSION_TOKEN = "rbx_shipcheck_session_token"
+
 print("[RBX-MCP] Plugin loading...")
 
 local ok, err = pcall(function()
@@ -26,6 +29,88 @@ local hasScriptEditor, scriptEditorErr = pcall(function()
 end)
 if not hasScriptEditor then
 	warn("[RBX-MCP] ScriptEditorService not available: " .. tostring(scriptEditorErr))
+end
+
+-- HMAC-SHA256 via embedded pure_lua_SHA (MIT, see sha2.lua header).
+local sha2 = require(script:WaitForChild("sha2"))
+
+-- F11: empty-string sentinel for delete; Roblox doesn't guarantee SetSetting(nil) deletes.
+local function getSetting(key)
+	local ok2, value = pcall(function()
+		return plugin:GetSetting(key)
+	end)
+	if not ok2 then
+		return nil
+	end
+	if type(value) == "string" and value ~= "" then
+		return value
+	end
+	return nil
+end
+
+local function setSetting(key, value)
+	pcall(function()
+		plugin:SetSetting(key, value)
+	end)
+end
+
+local function clearStoredCredentials()
+	setSetting(SETTING_PAIRING_SECRET, "")
+	setSetting(SETTING_SESSION_TOKEN, "")
+end
+
+local function hexToBytes(hex)
+	local out = {}
+	for i = 1, #hex, 2 do
+		out[#out + 1] = string.char(tonumber(string.sub(hex, i, i + 1), 16))
+	end
+	return table.concat(out)
+end
+
+-- Base64URL encoder over a binary string. Produces UNPADDED base64url
+-- (matches Node's `digest("base64url")`).
+local B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+local function base64url(bin)
+	local out = {}
+	local len = #bin
+	local i = 1
+	while i <= len do
+		local b1 = string.byte(bin, i) or 0
+		local b2 = string.byte(bin, i + 1)
+		local b3 = string.byte(bin, i + 2)
+		local n = b1 * 65536 + (b2 or 0) * 256 + (b3 or 0)
+		out[#out + 1] = string.sub(B64_ALPHABET, math.floor(n / 262144) + 1, math.floor(n / 262144) + 1)
+		out[#out + 1] = string.sub(B64_ALPHABET, math.floor(n / 4096) % 64 + 1, math.floor(n / 4096) % 64 + 1)
+		if b2 then
+			out[#out + 1] = string.sub(B64_ALPHABET, math.floor(n / 64) % 64 + 1, math.floor(n / 64) % 64 + 1)
+		end
+		if b3 then
+			out[#out + 1] = string.sub(B64_ALPHABET, n % 64 + 1, n % 64 + 1)
+		end
+		i = i + 3
+	end
+	return table.concat(out)
+end
+
+local function computeProof(pairingSecret, nonceServer, nonceClient)
+	local message = nonceServer .. "|" .. nonceClient
+	local hex = sha2.hmac(sha2.sha256, pairingSecret, message)
+	return base64url(hexToBytes(hex))
+end
+
+-- KAT self-test (mandatory tripwire — must match Node's HMAC-SHA256 base64url).
+do
+	local expected = "seQ0yfOosVjJqhEl7jEp70MuNPH3l6cNvmU51TdtnyE"
+	local actual = computeProof(
+		"test_secret_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		"nonceServerExample",
+		"nonceClientExample"
+	)
+	if actual ~= expected then
+		warn("[RBX-MCP] HMAC self-test FAILED. Expected " .. expected .. " got " .. tostring(actual))
+	else
+		print("[RBX-MCP] HMAC self-test passed.")
+	end
 end
 
 print("[RBX-MCP] Services loaded successfully")
@@ -160,10 +245,127 @@ local toggleButton = toolbar:CreateButton(
 	"Connect/disconnect from MCP bridge",
 	"rbxassetid://0"
 )
+local pairButton = toolbar:CreateButton(
+	"Pair Plugin",
+	"Enter the 6-digit pairing code from the MCP server's stderr",
+	"rbxassetid://0"
+)
+
+local pairWidget = plugin:CreateDockWidgetPluginGui(
+	"RbxShipcheckPair",
+	DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, false, 300, 150, 280, 130)
+)
+pairWidget.Title = "Pair MCP Plugin"
+pairWidget.Enabled = false
+
+local pairFrame = Instance.new("Frame")
+pairFrame.Size = UDim2.new(1, 0, 1, 0)
+pairFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+pairFrame.BorderSizePixel = 0
+pairFrame.Parent = pairWidget
+
+local pairLabel = Instance.new("TextLabel")
+pairLabel.Size = UDim2.new(1, -20, 0, 30)
+pairLabel.Position = UDim2.new(0, 10, 0, 10)
+pairLabel.BackgroundTransparency = 1
+pairLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+pairLabel.Text = "Enter the 6-digit code from npx roblox-shipcheck stderr:"
+pairLabel.TextXAlignment = Enum.TextXAlignment.Left
+pairLabel.TextWrapped = true
+pairLabel.Font = Enum.Font.SourceSans
+pairLabel.TextSize = 14
+pairLabel.Parent = pairFrame
+
+local pairBox = Instance.new("TextBox")
+pairBox.Size = UDim2.new(0.65, 0, 0, 30)
+pairBox.Position = UDim2.new(0.05, 0, 0, 50)
+pairBox.PlaceholderText = "123456"
+pairBox.Text = ""
+pairBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+pairBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+pairBox.BorderSizePixel = 0
+pairBox.Font = Enum.Font.SourceSans
+pairBox.TextSize = 16
+pairBox.ClearTextOnFocus = false
+pairBox.Parent = pairFrame
+
+local pairSubmit = Instance.new("TextButton")
+pairSubmit.Size = UDim2.new(0.25, 0, 0, 30)
+pairSubmit.Position = UDim2.new(0.72, 0, 0, 50)
+pairSubmit.Text = "Pair"
+pairSubmit.TextColor3 = Color3.fromRGB(255, 255, 255)
+pairSubmit.BackgroundColor3 = Color3.fromRGB(40, 120, 60)
+pairSubmit.BorderSizePixel = 0
+pairSubmit.Font = Enum.Font.SourceSansSemibold
+pairSubmit.TextSize = 14
+pairSubmit.Parent = pairFrame
+
+local pairStatus = Instance.new("TextLabel")
+pairStatus.Size = UDim2.new(1, -20, 0, 30)
+pairStatus.Position = UDim2.new(0, 10, 0, 90)
+pairStatus.BackgroundTransparency = 1
+pairStatus.TextColor3 = Color3.fromRGB(180, 180, 180)
+pairStatus.Text = ""
+pairStatus.TextXAlignment = Enum.TextXAlignment.Left
+pairStatus.TextWrapped = true
+pairStatus.Font = Enum.Font.SourceSans
+pairStatus.TextSize = 13
+pairStatus.Parent = pairFrame
+
+pairButton.Click:Connect(function()
+	pairWidget.Enabled = not pairWidget.Enabled
+end)
 
 local function buildUrl(path)
 	return string.format("%s:%d%s", BRIDGE_HOST, BRIDGE_PORT, path)
 end
+
+pairSubmit.MouseButton1Click:Connect(function()
+	local code = pairBox.Text:match("^%s*(%d+)%s*$")
+	if not code or #code ~= 6 then
+		pairStatus.Text = "Code must be 6 digits"
+		pairStatus.TextColor3 = Color3.fromRGB(220, 80, 80)
+		return
+	end
+	pairStatus.Text = "Pairing..."
+	pairStatus.TextColor3 = Color3.fromRGB(180, 180, 180)
+	local okReq, result = pcall(function()
+		return HttpService:RequestAsync({
+			Url = buildUrl("/studio/pair"),
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = HttpService:JSONEncode({ code = code, plugin_version = PLUGIN_VERSION }),
+		})
+	end)
+	if not okReq or not result.Success then
+		local errMsg = "Pair request failed"
+		if okReq and result and result.Body then
+			-- F7: pcall returns (ok, value) — must destructure both
+			local okJson, parsed = pcall(function()
+				return HttpService:JSONDecode(result.Body)
+			end)
+			if okJson and type(parsed) == "table" and parsed.error then
+				errMsg = parsed.error.message or errMsg
+			end
+		end
+		pairStatus.Text = errMsg
+		pairStatus.TextColor3 = Color3.fromRGB(220, 80, 80)
+		return
+	end
+	local okJson, data = pcall(function()
+		return HttpService:JSONDecode(result.Body)
+	end)
+	if not okJson or type(data) ~= "table" or not data.pairing_secret or not data.session_token then
+		pairStatus.Text = "Pair succeeded but response was malformed"
+		pairStatus.TextColor3 = Color3.fromRGB(220, 80, 80)
+		return
+	end
+	setSetting(SETTING_PAIRING_SECRET, data.pairing_secret)
+	setSetting(SETTING_SESSION_TOKEN, data.session_token)
+	pairStatus.Text = "Paired! Click 'Toggle Connection' to connect."
+	pairStatus.TextColor3 = Color3.fromRGB(80, 220, 80)
+	pairBox.Text = ""
+end)
 
 local function normalizePathSegments(pathStr)
 	local segments = {}
@@ -1551,31 +1753,165 @@ local function startPolling()
 	end)
 end
 
+-- F5: stateless refresh via pairing_secret PROOF. Defined here so it's
+-- available to future poll-loop 401 handling (Commit 4 will wire that).
+-- Returns true on success (mutates SETTING_SESSION_TOKEN and module-level sessionToken).
+local function refreshToken()
+	local secret = getSetting(SETTING_PAIRING_SECRET)
+	if not secret then
+		return false
+	end
+	local nonceClient = HttpService:GenerateGUID(false)
+	local okReq, result = pcall(function()
+		return HttpService:RequestAsync({
+			Url = buildUrl("/studio/refresh-token"),
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = HttpService:JSONEncode({
+				plugin_version = PLUGIN_VERSION,
+				nonce_client = nonceClient,
+			}),
+		})
+	end)
+	if not okReq or not result.Success then
+		return false
+	end
+	local okJson, data = pcall(function()
+		return HttpService:JSONDecode(result.Body)
+	end)
+	if not okJson or type(data) ~= "table" or not data.challenge_id or not data.nonce_server then
+		return false
+	end
+	local proof = computeProof(secret, data.nonce_server, nonceClient)
+	local okReq2, result2 = pcall(function()
+		return HttpService:RequestAsync({
+			Url = buildUrl("/studio/refresh-token/proof"),
+			Method = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body = HttpService:JSONEncode({
+				challenge_id = data.challenge_id,
+				proof = proof,
+			}),
+		})
+	end)
+	if not okReq2 or not result2.Success then
+		return false
+	end
+	local okJson2, refreshed = pcall(function()
+		return HttpService:JSONDecode(result2.Body)
+	end)
+	if not okJson2 or type(refreshed) ~= "table" or not refreshed.session_token then
+		return false
+	end
+	setSetting(SETTING_SESSION_TOKEN, refreshed.session_token)
+	sessionToken = refreshed.session_token
+	return true
+end
+
 local function connect()
 	if connected then
 		disconnect()
 		task.wait(0.1)
 	end
-	local ok, response = pcall(function()
+	local secret = getSetting(SETTING_PAIRING_SECRET)
+	local storedToken = getSetting(SETTING_SESSION_TOKEN)
+	if not secret or not storedToken then
+		warn("[RBX-MCP] Not paired. Click 'Pair Plugin' first.")
+		return
+	end
+	local nonceClient = HttpService:GenerateGUID(false)
+	local okReq, response = pcall(function()
 		return HttpService:RequestAsync({
 			Url = buildUrl("/studio/connect"),
 			Method = "POST",
-			Headers = { ["Content-Type"] = "application/json" },
-			Body = HttpService:JSONEncode({ version = PLUGIN_VERSION }),
+			Headers = {
+				["Content-Type"] = "application/json",
+				["Authorization"] = "Bearer " .. storedToken,
+			},
+			Body = HttpService:JSONEncode({
+				version = PLUGIN_VERSION,
+				nonce_client = nonceClient,
+			}),
 		})
 	end)
-
-	if ok and response.Success then
-		local data = HttpService:JSONDecode(response.Body)
-		sessionToken = data.token
-		connected = true
-		toggleButton:SetActive(true)
-		print("[RBX-MCP] Connected to bridge, session:", data.sessionId)
-		startPolling()
-	else
-		warn("[RBX-MCP] Failed to connect to bridge")
+	if not okReq or not response.Success then
+		if okReq and response and response.Body then
+			-- F7: pcall destructure both values
+			local okJson, parsed = pcall(function()
+				return HttpService:JSONDecode(response.Body)
+			end)
+			if okJson and type(parsed) == "table" and parsed.error then
+				local code = parsed.error.code
+				if code == "RBX.AUTH.INVALID_TOKEN" or code == "RBX.AUTH.MISSING_TOKEN" then
+					clearStoredCredentials()
+					warn("[RBX-MCP] Session no longer valid. Re-pair required.")
+					return
+				end
+				warn("[RBX-MCP] Connect failed: " .. tostring(parsed.error.message or code))
+				return
+			end
+		end
+		warn(
+			"[RBX-MCP] Connect request failed: HTTP "
+				.. tostring(response and response.StatusCode or "unknown")
+		)
+		return
 	end
+	local okJson, challengeData = pcall(function()
+		return HttpService:JSONDecode(response.Body)
+	end)
+	if
+		not okJson
+		or type(challengeData) ~= "table"
+		or not challengeData.challenge_id
+		or not challengeData.nonce_server
+	then
+		warn("[RBX-MCP] /studio/connect returned malformed challenge")
+		return
+	end
+	local proof = computeProof(secret, challengeData.nonce_server, nonceClient)
+	local okReq2, proofResponse = pcall(function()
+		return HttpService:RequestAsync({
+			Url = buildUrl("/studio/connect/proof"),
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json",
+				["Authorization"] = "Bearer " .. storedToken,
+			},
+			Body = HttpService:JSONEncode({
+				challenge_id = challengeData.challenge_id,
+				proof = proof,
+			}),
+		})
+	end)
+	if not okReq2 or not proofResponse.Success then
+		if okReq2 and proofResponse and proofResponse.Body then
+			-- F7
+			local okJson2, parsed2 = pcall(function()
+				return HttpService:JSONDecode(proofResponse.Body)
+			end)
+			if okJson2 and type(parsed2) == "table" and parsed2.error then
+				if parsed2.error.code == "RBX.AUTH.PROOF_FAILED" then
+					clearStoredCredentials()
+					warn("[RBX-MCP] PROOF failed. Re-pair required.")
+					return
+				end
+				warn("[RBX-MCP] PROOF rejected: " .. tostring(parsed2.error.message))
+				return
+			end
+		end
+		warn("[RBX-MCP] PROOF request failed")
+		return
+	end
+	sessionToken = storedToken
+	connected = true
+	toggleButton:SetActive(true)
+	print("[RBX-MCP] Connected to bridge")
+	startPolling()
 end
+
+-- Suppress "unused" lint warnings for forward-compat helpers exposed via closures.
+local _ = refreshToken
 
 toggleButton.Click:Connect(function()
 	if connected then

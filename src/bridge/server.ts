@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { SERVER_VERSION } from "../shared.js";
+import { RbxError, sendErrorEnvelope } from "./errors.js";
+import { PairingService } from "./pairing.js";
 import { checkVersionCompat } from "./version-check.js";
 
 interface PendingCommand {
@@ -156,9 +158,63 @@ function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function verifyBearerAuth(
+  request: IncomingMessage,
+  pairing: PairingService,
+): { outcome: "valid" | "missing" | "invalid" | "expired"; token: string } {
+  const header = request.headers.authorization;
+  if (typeof header !== "string" || !header.toLowerCase().startsWith("bearer ")) {
+    return { outcome: "missing", token: "" };
+  }
+  const token = header.slice(7).trim();
+  if (!token) return { outcome: "missing", token: "" };
+  const status = pairing.verifySessionToken(token);
+  if (status === "valid") return { outcome: "valid", token };
+  if (status === "expired") return { outcome: "expired", token };
+  return { outcome: "invalid", token };
+}
+
+function bearerOutcomeToError(outcome: "missing" | "invalid" | "expired"): RbxError {
+  if (outcome === "missing") {
+    return new RbxError(
+      "RBX.AUTH.MISSING_TOKEN",
+      "Authorization: Bearer header required",
+      false,
+      undefined,
+      "Plugin must pair via /studio/pair first to obtain a session_token",
+      401,
+    );
+  }
+  if (outcome === "expired") {
+    return new RbxError(
+      "RBX.AUTH.TOKEN_EXPIRED",
+      "Session token expired (24h TTL)",
+      true,
+      undefined,
+      "Plugin should refresh via /studio/refresh-token with stored pairing_secret",
+      401,
+    );
+  }
+  return new RbxError(
+    "RBX.AUTH.INVALID_TOKEN",
+    "Session token not recognized",
+    false,
+    undefined,
+    "Plugin must re-pair via 'Pair Plugin' toolbar button",
+    401,
+  );
+}
+
+export interface BridgeServerOptions {
+  port?: number;
+  pairingService: PairingService;
+}
+
 export function startBridgeServer(
-  port = DEFAULT_PORT,
+  options: BridgeServerOptions,
 ): Promise<{ port: number; stop: () => void }> {
+  const port = options.port ?? DEFAULT_PORT;
+  const pairingService = options.pairingService;
   let activeSession: PluginSession | null = null;
   const queuedCommands: QueuedCommand[] = [];
   const commandsById = new Map<string, QueuedCommand>();
@@ -260,51 +316,335 @@ export function startBridgeServer(
       const url = new URL(request.url, `http://${request.headers.host ?? "127.0.0.1"}`);
       const pathname = url.pathname;
 
-      if (request.method === "POST" && pathname === "/studio/connect") {
-        const body = await readJsonBody(request);
-        const pluginVersion = isRecord(body) ? asString(body["version"]) : undefined;
-        if (!pluginVersion) {
-          sendError(request, response, 400, "Plugin must send {version} in /studio/connect body");
-          return;
-        }
-        const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
-        if (compat === "invalid") {
-          sendError(request, response, 400, `Invalid plugin version string: ${pluginVersion}`);
-          return;
-        }
-        if (compat === "major_mismatch") {
-          // TODO(Commit 5 / F17): migrate to throw new RbxError(
-          //   "RBX.HANDSHAKE.VERSION_MISMATCH", ..., 426, retryAfterMs?,
-          //   data: { server: SERVER_VERSION, plugin: pluginVersion });
-          // Preserve server_version/plugin_version inside error.data — they
-          // are the only structured fields exposed by THIS legacy branch
-          // and must not be dropped when the envelope migration lands.
-          sendJson(request, response, 426, {
-            error:
-              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}. ` +
-              `Major version must match.`,
+      // POST /studio/pair { code, plugin_version } → { pairing_secret, session_token }
+      // One-time exchange. Rate-limited (F4).
+      if (request.method === "POST" && pathname === "/studio/pair") {
+        try {
+          const rl = pairingService.checkPairRateLimit();
+          if (!rl.allowed) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.RATE_LIMITED",
+              `Too many pair attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
+              true,
+              { resetInMs: rl.resetInMs },
+              "Wait then retry. If you didn't trigger this, check for another process abusing /studio/pair.",
+              429,
+              rl.resetInMs,
+            );
+          }
+          const body = await readJsonBody(request);
+          if (!isRecord(body)) {
+            throw new RbxError(
+              "RBX.VALIDATION.INVALID_INPUT",
+              "Body must be JSON object",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const code = asString(body["code"]);
+          const pluginVersion = asString(body["plugin_version"]);
+          if (!code || !pluginVersion) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.MISSING_FIELDS",
+              "Body must include {code, plugin_version}",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
+          if (compat === "major_mismatch") {
+            throw new RbxError(
+              "RBX.HANDSHAKE.VERSION_MISMATCH",
+              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
+              false,
+              { server: SERVER_VERSION, plugin: pluginVersion },
+              "Upgrade the older component to a matching major version",
+              426,
+            );
+          }
+          if (!pairingService.consumePairingCode(code)) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.INVALID_CODE",
+              "Pairing code is invalid or expired",
+              false,
+              undefined,
+              "Restart `npx roblox-shipcheck` to get a new code, then try again within 60s",
+              401,
+            );
+          }
+          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+          const session = pairingService.issueSessionToken();
+          sendJson(request, response, 200, {
+            ok: true,
+            pairing_secret: pairingSecret,
+            session_token: session.token,
+            session_token_expires_at: session.expiresAt,
             server_version: SERVER_VERSION,
-            plugin_version: pluginVersion,
           });
-          return;
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
         }
-        if (compat === "minor_warning") {
-          console.error(
-            `[roblox-shipcheck] WARN: minor version drift — server v${SERVER_VERSION} ` +
-              `vs plugin v${pluginVersion}. Continuing but recommend upgrade.`,
-          );
+        return;
+      }
+
+      // POST /studio/connect { version, nonce_client }
+      // Bearer required. Issues HMAC challenge.
+      if (request.method === "POST" && pathname === "/studio/connect") {
+        try {
+          const tokenStatus = verifyBearerAuth(request, pairingService);
+          if (tokenStatus.outcome !== "valid") {
+            throw bearerOutcomeToError(tokenStatus.outcome);
+          }
+          const body = await readJsonBody(request);
+          if (!isRecord(body)) {
+            throw new RbxError(
+              "RBX.VALIDATION.INVALID_INPUT",
+              "Body must be JSON object",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const pluginVersion = asString(body["version"]);
+          const nonceClient = asString(body["nonce_client"]);
+          if (!pluginVersion || !nonceClient) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.MISSING_FIELDS",
+              "/studio/connect body must include {version, nonce_client}",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const compat = checkVersionCompat(SERVER_VERSION, pluginVersion);
+          if (compat === "major_mismatch") {
+            throw new RbxError(
+              "RBX.HANDSHAKE.VERSION_MISMATCH",
+              `Server v${SERVER_VERSION} cannot pair with plugin v${pluginVersion}`,
+              false,
+              { server: SERVER_VERSION, plugin: pluginVersion },
+              "Upgrade the older component",
+              426,
+            );
+          }
+          if (compat === "minor_warning") {
+            console.error(
+              `[roblox-shipcheck] WARN: minor drift server ${SERVER_VERSION} vs plugin ${pluginVersion}`,
+            );
+          }
+          const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
+          sendJson(request, response, 200, {
+            ok: true,
+            challenge_id: challengeId,
+            nonce_server: nonceServer,
+          });
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
         }
-        activeSession = {
-          id: randomUUID(),
-          token: randomUUID(),
-          connectedAt: Date.now(),
-          lastPollAt: 0,
-        };
-        sendJson(request, response, 200, {
-          sessionId: activeSession.id,
-          token: activeSession.token,
-        });
-        flushPollWaiters();
+        return;
+      }
+
+      // POST /studio/connect/proof { challenge_id, proof }
+      // Final handshake step. On success, marks plugin connected.
+      if (request.method === "POST" && pathname === "/studio/connect/proof") {
+        try {
+          const tokenStatus = verifyBearerAuth(request, pairingService);
+          if (tokenStatus.outcome !== "valid") {
+            throw bearerOutcomeToError(tokenStatus.outcome);
+          }
+          const body = await readJsonBody(request);
+          if (!isRecord(body)) {
+            throw new RbxError(
+              "RBX.VALIDATION.INVALID_INPUT",
+              "Body must be JSON object",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const challengeId = asString(body["challenge_id"]);
+          const proof = asString(body["proof"]);
+          if (!challengeId || !proof) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.MISSING_FIELDS",
+              "Body must include {challenge_id, proof}",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+          if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+            throw new RbxError(
+              "RBX.AUTH.PROOF_FAILED",
+              "PROOF challenge failed — invalid HMAC or expired challenge",
+              false,
+              undefined,
+              "Re-pair the plugin via the 'Pair Plugin' toolbar button",
+              401,
+            );
+          }
+          activeSession = {
+            id: randomUUID(),
+            token: tokenStatus.token,
+            connectedAt: Date.now(),
+            lastPollAt: Date.now(),
+          };
+          sendJson(request, response, 200, {
+            ok: true,
+            session_id: activeSession.id,
+          });
+          flushPollWaiters();
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
+        return;
+      }
+
+      // POST /studio/refresh-token { plugin_version, nonce_client }
+      // Open endpoint (rate-limited). Plugin proves possession of pairing_secret
+      // to mint a fresh session_token. The expired bearer is not consulted (F5).
+      if (request.method === "POST" && pathname === "/studio/refresh-token") {
+        try {
+          const rl = pairingService.checkRefreshRateLimit();
+          if (!rl.allowed) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.RATE_LIMITED",
+              `Too many refresh attempts; try again in ${Math.ceil(rl.resetInMs / 1000)}s`,
+              true,
+              { resetInMs: rl.resetInMs },
+              undefined,
+              429,
+              rl.resetInMs,
+            );
+          }
+          const body = await readJsonBody(request);
+          if (!isRecord(body)) {
+            throw new RbxError(
+              "RBX.VALIDATION.INVALID_INPUT",
+              "Body must be JSON",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const pluginVersion = asString(body["plugin_version"]);
+          const nonceClient = asString(body["nonce_client"]);
+          if (!pluginVersion || !nonceClient) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.MISSING_FIELDS",
+              "Body must include {plugin_version, nonce_client}",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          if (checkVersionCompat(SERVER_VERSION, pluginVersion) === "major_mismatch") {
+            throw new RbxError(
+              "RBX.HANDSHAKE.VERSION_MISMATCH",
+              `Cannot refresh: server v${SERVER_VERSION} vs plugin v${pluginVersion}`,
+              false,
+              { server: SERVER_VERSION, plugin: pluginVersion },
+              "Upgrade the older component",
+              426,
+            );
+          }
+          const { challengeId, nonceServer } = pairingService.issueChallenge(nonceClient);
+          sendJson(request, response, 200, {
+            ok: true,
+            challenge_id: challengeId,
+            nonce_server: nonceServer,
+          });
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
+        return;
+      }
+
+      // POST /studio/refresh-token/proof { challenge_id, proof }
+      // Verifies HMAC against current pairing_secret. Mints fresh session_token.
+      if (request.method === "POST" && pathname === "/studio/refresh-token/proof") {
+        try {
+          const body = await readJsonBody(request);
+          if (!isRecord(body)) {
+            throw new RbxError(
+              "RBX.VALIDATION.INVALID_INPUT",
+              "Body must be JSON",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const challengeId = asString(body["challenge_id"]);
+          const proof = asString(body["proof"]);
+          if (!challengeId || !proof) {
+            throw new RbxError(
+              "RBX.HANDSHAKE.MISSING_FIELDS",
+              "Body must include {challenge_id, proof}",
+              false,
+              undefined,
+              undefined,
+              400,
+            );
+          }
+          const pairingSecret = await pairingService.loadOrCreatePairingSecret();
+          if (!pairingService.verifyProof(challengeId, proof, pairingSecret)) {
+            throw new RbxError(
+              "RBX.AUTH.PROOF_FAILED",
+              "Refresh PROOF failed — pairing_secret mismatch or expired challenge",
+              false,
+              undefined,
+              "Re-pair via 'Pair Plugin' toolbar button",
+              401,
+            );
+          }
+          // F11-followup (review item 11): revoke ALL session tokens before issuing new one.
+          // Single-instance scope: only one paired plugin at a time, so stale tokens left over
+          // from prior pair attempts are NOT desirable. Refresh = reset.
+          pairingService.revokeAllSessionTokens();
+          const fresh = pairingService.issueSessionToken();
+          if (activeSession) {
+            activeSession.token = fresh.token;
+          }
+          sendJson(request, response, 200, {
+            ok: true,
+            session_token: fresh.token,
+            session_token_expires_at: fresh.expiresAt,
+          });
+        } catch (err) {
+          if (err instanceof RbxError) {
+            sendErrorEnvelope(request, response, err, randomUUID());
+            return;
+          }
+          throw err;
+        }
         return;
       }
 
