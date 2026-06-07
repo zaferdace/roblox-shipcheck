@@ -1,0 +1,7 @@
+# Toolchain pins for the shipcheck Studio plugin (Creator Store edition).
+# Install with: rokit install   (or aftman install with an equivalent aftman.toml)
+[tools]
+rojo = "rojo-rbx/rojo@7.6.1"
+lune = "lune-org/lune@0.10.4"
+selene = "Kampfkarren/selene@0.31.0"
+stylua = "JohnnyMorganz/StyLua@2.5.2"

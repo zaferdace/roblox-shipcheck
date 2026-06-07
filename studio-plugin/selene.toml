@@ -1,0 +1,6 @@
+std = "roblox"
+
+[lints]
+# The pure core deliberately keeps a registry of rule modules; allow that pattern.
+mixed_table = "warn"
+unused_variable = "warn"

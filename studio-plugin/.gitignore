@@ -1,0 +1,10 @@
+# Build output
+/build/
+*.rbxm
+*.rbxmx
+
+# Toolchain
+/.rokit/
+
+# OS
+.DS_Store
