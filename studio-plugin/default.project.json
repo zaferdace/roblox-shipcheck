@@ -1,7 +1,6 @@
 {
 	"name": "shipcheck",
 	"tree": {
-		"$className": "Folder",
 		"$path": "src"
 	}
 }

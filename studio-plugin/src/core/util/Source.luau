@@ -10,7 +10,10 @@ local function blank(segment: string): string
 	return (segment:gsub("[^\n]", " "))
 end
 
-function Source.strip(src: string): string
+-- Single-pass scanner. Comments are always blanked. String literals are blanked
+-- when `blankStrings` is true (Source.strip, for call-pattern matching) and kept
+-- verbatim when false (Source.stripComments, for reading GetService("X") literals).
+local function scan(src: string, blankStrings: boolean): string
 	if type(src) ~= "string" then
 		return ""
 	end
@@ -19,12 +22,15 @@ function Source.strip(src: string): string
 	local index = 1
 	local length = #src
 
+	local function pushSegment(segment: string)
+		table.insert(out, if blankStrings then blank(segment) else segment)
+	end
+
 	while index <= length do
 		local two = src:sub(index, index + 1)
 		local char = src:sub(index, index)
 
 		if two == "--" then
-			-- Comment. Check for a long-bracket form first.
 			local eqs = src:match("^%[(=*)%[", index + 2)
 			if eqs then
 				local close = "]" .. eqs .. "]"
@@ -39,36 +45,30 @@ function Source.strip(src: string): string
 				index = stop + 1
 			end
 		elseif char == '"' or char == "'" then
-			-- Short string with escape handling.
 			local quote = char
-			table.insert(out, " ")
+			local start = index
 			index += 1
 			while index <= length do
 				local ch = src:sub(index, index)
 				if ch == "\\" then
-					table.insert(out, "  ")
 					index += 2
 				elseif ch == quote then
-					table.insert(out, " ")
 					index += 1
 					break
 				elseif ch == "\n" then
-					table.insert(out, "\n")
-					index += 1
 					break
 				else
-					table.insert(out, " ")
 					index += 1
 				end
 			end
+			pushSegment(src:sub(start, index - 1))
 		elseif char == "[" then
-			-- Long string [[ ]] / [==[ ]==].
 			local eqs = src:match("^%[(=*)%[", index)
 			if eqs then
 				local close = "]" .. eqs .. "]"
 				local endPos = src:find(close, index + 2 + #eqs, true)
 				local stop = endPos and (endPos + #close - 1) or length
-				table.insert(out, blank(src:sub(index, stop)))
+				pushSegment(src:sub(index, stop))
 				index = stop + 1
 			else
 				table.insert(out, char)
@@ -81,6 +81,16 @@ function Source.strip(src: string): string
 	end
 
 	return table.concat(out)
+end
+
+-- Blanks comments AND string literals (offsets/newlines preserved).
+function Source.strip(src: string): string
+	return scan(src, true)
+end
+
+-- Blanks comments only; keeps string literals (needed for GetService("X")).
+function Source.stripComments(src: string): string
+	return scan(src, false)
 end
 
 -- matches a method call `:name(`

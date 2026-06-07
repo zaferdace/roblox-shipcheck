@@ -4,3 +4,5 @@ std = "roblox"
 # The pure core deliberately keeps a registry of rule modules; allow that pattern.
 mixed_table = "warn"
 unused_variable = "warn"
+# Explicit UDim2.new(...) is fine and often clearer than fromScale/fromOffset.
+roblox_manual_fromscale_or_fromoffset = "allow"

@@ -54,6 +54,25 @@ function Context.part(path, props)
 	}
 end
 
+function Context.instance(path, className, props, container)
+	return {
+		path = path,
+		name = leafName(path),
+		className = className or "Instance",
+		container = container or "Workspace",
+		props = props or {},
+	}
+end
+
+-- builds N placeholder part records (for count-based thresholds)
+function Context.bulkParts(count)
+	local parts = {}
+	for index = 1, count do
+		parts[index] = Context.part("Workspace.P" .. index, { anchored = true, sizeMagnitude = 1 })
+	end
+	return parts
+end
+
 function Context.script(path, source, opts)
 	opts = opts or {}
 	return {

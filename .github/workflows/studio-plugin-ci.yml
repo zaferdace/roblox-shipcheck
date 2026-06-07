@@ -1,0 +1,39 @@
+name: studio-plugin CI
+
+on:
+  push:
+    paths: ["studio-plugin/**", ".github/workflows/studio-plugin-ci.yml"]
+  pull_request:
+    paths: ["studio-plugin/**", ".github/workflows/studio-plugin-ci.yml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned toolchain (rojo, lune, selene, stylua)
+        uses: CompeyDev/setup-rokit@v0.1.2
+        with:
+          manifest-file: studio-plugin/rokit.toml
+
+      - name: Format check
+        run: stylua --check src tests
+
+      - name: Lint
+        run: selene src
+
+      - name: Headless tests
+        run: lune run tests/runner.luau "$PWD"
+
+      - name: Build .rbxm
+        run: rojo build default.project.json -o build/shipcheck.rbxm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: shipcheck-rbxm
+          path: studio-plugin/build/shipcheck.rbxm

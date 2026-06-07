@@ -76,6 +76,18 @@ local function main()
 	local specs = discoverSpecs(TESTS_DIR, {})
 	table.sort(specs)
 
+	-- optional substring filter (args[2]) so a focused run only executes matching specs
+	local filter = process.args[2]
+	if filter then
+		local filtered = {}
+		for _, specPath in specs do
+			if specPath:find(filter, 1, true) then
+				table.insert(filtered, specPath)
+			end
+		end
+		specs = filtered
+	end
+
 	for _, specPath in specs do
 		local source = fs.readFile(specPath)
 		local env = specEnv(srcRoot, testsRoot, kit)
