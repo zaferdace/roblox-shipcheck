@@ -138,8 +138,17 @@ function ReportView.render(container: Instance, report, _refs, deps)
 		TextColor3 = Palette.slate,
 		TextSize = 13,
 		Position = UDim2.new(0, 0, 0, 66),
-		Size = UDim2.new(1, 0, 0, 18),
+		Size = UDim2.new(0.66, 0, 0, 18),
 	}, container)
+
+	if deps.onExport then
+		Components.button("Export ▸ Output", {
+			Size = UDim2.new(0, 120, 0, 22),
+			Position = UDim2.new(1, -120, 0, 64),
+			BackgroundColor3 = Palette.navy700,
+			TextSize = 12,
+		}, deps.onExport, container)
+	end
 
 	local scroller = Instance.new("ScrollingFrame")
 	scroller.Size = UDim2.new(1, 0, 1, -90)

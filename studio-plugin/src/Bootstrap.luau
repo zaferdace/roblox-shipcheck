@@ -4,6 +4,7 @@
 local Engine = require(script.Parent.core.Engine)
 local Scoring = require(script.Parent.core.Scoring)
 local rules = require(script.Parent.core.rules)
+local ReportExport = require(script.Parent.core.ReportExport)
 
 local DataModelScanner = require(script.Parent.services.DataModelScanner)
 local License = require(script.Parent.services.License)
@@ -75,11 +76,17 @@ function Bootstrap.start(plugin: Plugin)
 			rulesRun = rulesRun,
 			rulesErrored = rulesErrored,
 		}
+		local limits = License.limits()
 		ReportView.render(content, report, result.refs, {
 			onJump = function(path)
 				Selection.jumpTo(result.refs, path)
 			end,
-			limits = License.limits(),
+			onExport = if limits.allowExport
+				then function()
+					print(ReportExport.toMarkdown(report))
+				end
+				else nil,
+			limits = limits,
 			isPro = License.isPro(),
 		})
 		runButton.Text = "Re-run audit"
